@@ -111,7 +111,7 @@ class DailyDigest(commands.Cog):
             lines = [f"• [{s['host']}]({s['url']}) · `{s['id']}`" for s in summary.pending_samples[:10]]
             embed.add_field(name="最久未处理", value="\n".join(lines), inline=False)
 
-        embed.set_footer(text="处理入口：api.involutionhell.com/admin/community")
+        embed.set_footer(text="处理入口：involutionhell.com/admin/community")
         try:
             await channel.send(embed=embed)
         except Exception as e:
@@ -138,7 +138,7 @@ class DailyDigest(commands.Cog):
             for s in summary.pending_samples:
                 lines.append(f"  [{s['id']}] {s['host']} → {s['url']}")
             lines.append("")
-        lines.append("处理入口：https://api.involutionhell.com/admin/community")
+        lines.append("处理入口：https://involutionhell.com/admin/community")
 
         body_text = "\n".join(lines)
 

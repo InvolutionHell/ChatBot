@@ -44,7 +44,9 @@ class AlertServer(commands.Cog):
         self._runner: web.AppRunner | None = None
 
     async def cog_load(self) -> None:
-        await self.bot.wait_until_ready()  # 等 bot 连上 Discord 后再挂 server
+        # 注意：cog_load 运行在 bot.setup_hook 里——此时 bot 还没 connect，
+        # 不能在这里 await wait_until_ready，否则会死锁（on_ready 要等 setup_hook 返回）。
+        # aiohttp server 不依赖 Discord 登录，直接在这里挂起即可。
         app = web.Application()
         app.router.add_post("/alert/flagged", self._handle_flagged)
         self._runner = web.AppRunner(app, access_log=None)
@@ -112,7 +114,7 @@ class AlertServer(commands.Cog):
         embed.add_field(name="来源", value=payload.get("host") or "-", inline=True)
         if payload.get("recommendation"):
             embed.add_field(name="推荐语", value=payload["recommendation"], inline=False)
-        embed.set_footer(text="请尽快人工复核：api.involutionhell.com/admin/community")
+        embed.set_footer(text="请尽快人工复核：involutionhell.com/admin/community")
 
         try:
             await channel.send(embed=embed)
@@ -139,7 +141,7 @@ class AlertServer(commands.Cog):
             f"推荐语：{payload.get('recommendation') or '(无)'}",
             f"命中：{flag_label}",
             "",
-            "请尽快人工复核：https://api.involutionhell.com/admin/community",
+            "请尽快人工复核：https://involutionhell.com/admin/community",
         ]
         cfg = SmtpConfig(
             host="smtp.gmail.com",
