@@ -1,17 +1,21 @@
 """Slash 命令 Cog。
 
-/share <url>：手动提交一个链接到内卷地狱主站。
+/share <url>：手动提交链接到内卷地狱主站，**并在频道里公开展示**。
 
-UX 细节：
-- 后端 enrichment 是 @Async 的，submit 立刻返回 PENDING
-- 直接把 PENDING 抛给用户会像"审核中...静默失败"
-- 所以这里 submit 成功后轮询 5×1s，最长等 5 秒拿最终 status；拿到了就 edit 原回复
-- 5 秒拿不到就 edit 成"审核中，稍后看主站"，不给人卡死的感觉
+设计思路（用户反馈：/share 比直接贴链接还差 → 没人会用）：
+- Discord 本身会对任意 URL 自动 unfurl 出 OG 预览卡片（标题/描述/封面图）
+- 所以 /share 的回复 **把 URL 当纯文本** 发到频道，让 Discord 直接渲染，不自己造轮子
+- 额外加一行小字注释 "已收录到内卷地狱 · #id"，用 Discord 的 `-#` subtext 语法
+- 不等后端异步审核完成、不轮询 status、不显示"审核中"——直接"已收录"：
+  - 这个事实在 API 返回 200 的那一刻就是真的（行已落 shared_links）
+  - PENDING_MANUAL / FLAGGED 是主站展示层的决定，跟"是否收录"是两件事
+  - 告诉用户"审核中"只会让人误以为失败（见 user feedback）
+
+/share 现在对普通用户价值 = 直接贴 + 多一句"✅ 已收录"+主站链接跳转。
 """
 
 from __future__ import annotations
 
-import asyncio
 import re
 
 import discord
@@ -19,26 +23,12 @@ import structlog
 from discord import app_commands
 from discord.ext import commands
 
-from ..api_client import (
-    DuplicateURL,
-    InternalAPIError,
-    fetch_link,
-    submit_internal,
-)
+from ..api_client import DuplicateURL, InternalAPIError, submit_internal
 from ..config import Settings
 
 _URL_RE = re.compile(r"^https?://[^\s<>\"'\]\)]+$", re.IGNORECASE)
 
 log = structlog.get_logger(__name__)
-
-# 轮询终态的前端展示
-_STATUS_CN = {
-    "APPROVED": ("✅ 已上架主站", discord.Color.green()),
-    "PENDING_MANUAL": ("⏳ 进入人工审核队列", discord.Color.orange()),
-    "FLAGGED": ("⚠️ 命中安全检查，进人工审核", discord.Color.orange()),
-    "REJECTED": ("❌ 被拒绝", discord.Color.red()),
-    "ARCHIVED": ("📦 原文已失效", discord.Color.greyple()),
-}
 
 
 class ShareCommands(commands.Cog):
@@ -46,7 +36,7 @@ class ShareCommands(commands.Cog):
         self.bot = bot
         self.settings = settings
 
-    @app_commands.command(name="share", description="提交一个链接到内卷地狱分享库")
+    @app_commands.command(name="share", description="把链接收录到内卷地狱分享库（频道内公开）")
     @app_commands.describe(
         url="以 http:// 或 https:// 开头的完整 URL",
         recommendation="可选：一句话推荐语",
@@ -57,13 +47,15 @@ class ShareCommands(commands.Cog):
         url: str,
         recommendation: str | None = None,
     ) -> None:
-        if not _URL_RE.match(url.strip()):
+        url = url.strip()
+        if not _URL_RE.match(url):
             await interaction.response.send_message(
                 "格式不对，必须以 http:// 或 https:// 开头。", ephemeral=True
             )
             return
 
-        await interaction.response.defer(ephemeral=False, thinking=True)
+        # 不 thinking（不显示"bot is thinking..."），想让 OG 预览尽快出
+        await interaction.response.defer(ephemeral=False, thinking=False)
 
         try:
             result = await submit_internal(
@@ -76,7 +68,7 @@ class ShareCommands(commands.Cog):
             )
         except DuplicateURL:
             await interaction.followup.send(
-                "这个链接已经在分享库里了（去重）。", ephemeral=True
+                f"这个链接已经在分享库里了（去重）：{url}", ephemeral=True
             )
             return
         except InternalAPIError as e:
@@ -90,42 +82,17 @@ class ShareCommands(commands.Cog):
             await interaction.followup.send("提交失败，已通知开发者。", ephemeral=True)
             return
 
-        # 轮询 enrichment 结果：每 1s 拉一次，最多等 5s
-        final_status = result.status
-        og_title = result.og_title
-        for _ in range(5):
-            if final_status != "PENDING":
-                break
-            await asyncio.sleep(1)
-            try:
-                detail = await fetch_link(
-                    base_url=self.settings.internal_submit_url,
-                    internal_key=self.settings.internal_api_key.get_secret_value(),
-                    link_id=result.link_id,
-                    timeout=self.settings.chatbot_api_timeout,
-                )
-            except Exception as e:
-                log.warning("slash_share_poll_failed", error=str(e))
-                break
-            if detail is None:
-                break
-            final_status = detail.status
-            og_title = detail.og_title
-
-        status_label, color = _STATUS_CN.get(
-            final_status, ("⏳ 审核中，结果请稍后在主站查看", discord.Color.blurple())
+        # 把 URL 作为消息正文发出去：Discord 自动 unfurl 出 OG 预览卡（标题/描述/封面图）
+        # 小字 caption 用 `-# ...` 语法（Discord 的 subtext 行，显示为灰色细字）
+        content = (
+            f"{url}\n"
+            f"-# ✅ 已收录到 [内卷地狱分享库](https://involutionhell.com/share) "
+            f"· `#{result.link_id}` · by {interaction.user.display_name}"
         )
+        if recommendation:
+            content = f"> {recommendation}\n{content}"
 
-        embed = discord.Embed(
-            title=og_title or result.host,
-            url=url,
-            description=f"**{status_label}**",
-            color=color,
-        )
-        embed.add_field(name="ID", value=str(result.link_id), inline=True)
-        embed.add_field(name="来源", value=result.host, inline=True)
-        embed.set_footer(text=f"提交人 {interaction.user.display_name}")
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(content=content)
 
 
 async def setup(bot: commands.Bot) -> None:

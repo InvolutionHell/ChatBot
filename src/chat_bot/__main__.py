@@ -56,12 +56,22 @@ class ChatBot(commands.Bot):
         await self.load_extension("chat_bot.cogs.alerts")
 
         # Slash command 同步：配了 guild_id 走 guild 同步（秒生效），否则全局（最长 1h 扩散）
-        if self.chatbot_settings.discord_guild_id:
-            guild = discord.Object(id=self.chatbot_settings.discord_guild_id)
-            self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
-        else:
-            await self.tree.sync()
+        log = structlog.get_logger(__name__)
+        try:
+            if self.chatbot_settings.discord_guild_id:
+                guild = discord.Object(id=self.chatbot_settings.discord_guild_id)
+                self.tree.copy_global_to(guild=guild)
+                synced = await self.tree.sync(guild=guild)
+            else:
+                synced = await self.tree.sync()
+            log.info(
+                "slash_commands_synced",
+                count=len(synced),
+                names=[c.name for c in synced],
+            )
+        except Exception as e:
+            # sync 失败不阻塞 bot 启动，记日志让运维知道去重试
+            log.error("slash_commands_sync_failed", error=str(e))
 
     async def on_ready(self) -> None:
         log = structlog.get_logger(__name__)
