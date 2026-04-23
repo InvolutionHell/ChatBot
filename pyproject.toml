@@ -1,0 +1,48 @@
+[project]
+name = "chat-bot"
+version = "0.1.0"
+description = "Involution Hell 社群 Discord 机器人：监听分享频道、抓取 OG 元数据、入库到共享 Postgres"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "Involution Hell" }]
+dependencies = [
+    # Discord API 封装
+    "discord.py>=2.4.0",
+    # 异步 HTTP 客户端（调 involution-hell 后端 internal API）
+    "httpx>=0.27.0",
+    # 配置读取（复用 involution-hell 后端的 .env 文件）
+    "pydantic-settings>=2.4.0",
+    # 日志（systemd journalctl 可读）
+    "structlog>=24.4.0",
+    # 异步 SMTP（每日摘要邮件走 Gmail App Password）
+    "aiosmtplib>=3.0.0",
+    # 内嵌 HTTP 服务器，接收后端 FLAGGED 实时 webhook
+    "aiohttp>=3.10.0",
+]
+
+[project.scripts]
+chat-bot = "chat_bot.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/chat_bot"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC"]
+# ASYNC109: httpx.AsyncClient 的 timeout 是标准 API，不用改成 asyncio.timeout()
+ignore = ["E501", "ASYNC109"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.6.0",
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+]

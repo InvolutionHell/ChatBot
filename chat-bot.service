@@ -1,0 +1,30 @@
+[Unit]
+Description=Involution Hell Discord ChatBot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/ChatBot
+# 直接吃 involution-hell 后端的 .env（单一来源）
+EnvironmentFile=/home/ubuntu/involution-hell-project/backend/.env
+# uv 在 PATH 里（~/.local/bin），systemd 默认 PATH 偏窄，显式给一下
+Environment=PATH=/home/ubuntu/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/ubuntu/.local/bin/uv run --no-sync chat-bot
+Restart=on-failure
+RestartSec=5
+# 日志走 journalctl
+StandardOutput=journal
+StandardError=journal
+
+# 轻量隔离（不影响功能）
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/ChatBot
+
+[Install]
+WantedBy=multi-user.target
