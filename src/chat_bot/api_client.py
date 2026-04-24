@@ -62,12 +62,14 @@ def _safe_json(resp: httpx.Response, *, endpoint: str) -> dict:
     """安全解析 resp.json()：失败不让调用方吃 raw ValueError，统一抛 InternalAPIError。
 
     - 后端异常时偶尔会吐 HTML 错误页 / gateway 的纯文本 → JSONDecodeError
-    - 记录 status + body 前 200 字符，便于日志排查
+    - 记录 status + body 前 200 字节（不走 resp.text，避免解码整个大 body
+      或在错误处理路径上再抛一次 UnicodeDecodeError 把原始 JSON 错因盖掉）
     """
     try:
         return resp.json()
     except (json.JSONDecodeError, ValueError) as e:
-        preview = (resp.text or "")[:200]
+        # 只切前 200 字节，再用 replace 策略解码——坏字节变成 U+FFFD 而不是抛
+        preview = resp.content[:200].decode("utf-8", errors="replace")
         log.warning(
             "api_bad_json",
             endpoint=endpoint,
