@@ -201,3 +201,25 @@ async def test_alert_hmac_bad_prefix_returns_401(hmac_client):
         data=raw,
     )
     assert resp.status == 401
+
+
+@pytest.mark.asyncio
+async def test_alert_hmac_valid_sig_wrong_key_returns_403(hmac_client):
+    """鉴权层先后顺序：X-Internal-Key 先于 HMAC 校验。
+
+    即使签名对得上，但 X-Internal-Key 是错的，也必须是 403（不是 401），
+    这样调用方日志一看就知道是 key 配错，而不是签名算法对不上。
+    """
+    body = {"type": "flagged", "id": 1}
+    raw = json.dumps(body).encode("utf-8")
+    sig = _sign("super-hmac", raw)  # 签名算对了
+    resp = await hmac_client.post(
+        "/alert/flagged",
+        headers={
+            "X-Internal-Key": "WRONG-KEY",  # 但 key 错
+            "X-Signature": sig,
+            "Content-Type": "application/json",
+        },
+        data=raw,
+    )
+    assert resp.status == 403
