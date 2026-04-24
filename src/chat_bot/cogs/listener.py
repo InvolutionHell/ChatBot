@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from urllib.parse import urlparse
 
 import discord
 import structlog
@@ -24,6 +25,32 @@ from ..api_client import DuplicateURL, InternalAPIError, fetch_link, submit_inte
 from ..config import Settings
 
 _URL_RE = re.compile(r"https?://[^\s<>\"'\]\)]+", re.IGNORECASE)
+
+# 跳过 Discord 自身的各种链接：用户经常复制错（比如右键"复制消息链接"会粘
+# discord.com/channels/.../... 出来，这不该被当作"分享"入库）。静默忽略，不
+# 回复也不提交，像 bot 没看到一样。
+_SKIP_HOSTS = frozenset({
+    # 主站
+    "discord.com",
+    "www.discord.com",
+    "canary.discord.com",
+    "ptb.discord.com",
+    # 邀请短链
+    "discord.gg",
+    # 附件 / CDN
+    "discordapp.com",
+    "cdn.discordapp.com",
+    "media.discordapp.net",
+})
+
+
+def _should_skip(url: str) -> bool:
+    """URL 是否属于需要跳过的源（当前只屏蔽 Discord 自身域名）。"""
+    try:
+        host = urlparse(url).netloc.lower().split(":")[0]
+    except Exception:
+        return False
+    return host in _SKIP_HOSTS
 
 # 轮询最终状态的参数：每 2s 查一次，最多 30s
 _POLL_INTERVAL_SEC = 2.0
@@ -61,6 +88,10 @@ class ShareListener(commands.Cog):
 
     async def _handle_one_url(self, message: discord.Message, url: str) -> None:
         """提交单个 URL，并根据后端响应给用户即时反馈 + 延迟最终状态通知。"""
+        if _should_skip(url):
+            # Discord 自身链接静默忽略——不提交、不回复、不打扰群聊
+            log.debug("share_skip_blocked_host", url=url)
+            return
         try:
             result = await submit_internal(
                 base_url=self.settings.internal_submit_url,
