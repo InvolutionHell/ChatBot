@@ -9,6 +9,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 from unittest.mock import MagicMock
 
 import pytest
@@ -23,12 +26,16 @@ from chat_bot.cogs.alerts import AlertServer
 class _FakeSettings:
     """最小化的 Settings mock，只提供 AlertServer 用到的字段。"""
 
-    def __init__(self, key: str = "test-secret") -> None:
+    def __init__(
+        self, key: str = "test-secret", hmac_secret: str | None = None
+    ) -> None:
         self.internal_api_key = SecretStr(key)
         self.discord_admin_channel_id = None  # 不推 Discord
         self.gmail_user = ""
         self.gmail_app_password = SecretStr("")
         self.digest_email_to = ""
+        # 默认不开 HMAC，向后兼容既有测试；要开时传 hmac_secret
+        self.webhook_hmac_secret = SecretStr(hmac_secret) if hmac_secret else None
 
     @property
     def email_configured(self) -> bool:  # 跳过邮件发送
@@ -112,3 +119,85 @@ async def test_alert_rejects_bad_json(client):
         data="not-json",
     )
     assert resp.status == 400
+
+
+# ── HMAC 签名分支 ─────────────────────────────────────────────────────
+def _sign(secret: str, raw: bytes) -> str:
+    return "sha256=" + hmac.new(
+        secret.encode("utf-8"), raw, hashlib.sha256
+    ).hexdigest()
+
+
+@pytest_asyncio.fixture
+async def hmac_client():
+    """带 HMAC 开关的 AlertServer test client。"""
+    settings = _FakeSettings(hmac_secret="super-hmac")
+    server = AlertServer.__new__(AlertServer)
+    server.bot = MagicMock()
+    server.bot.get_channel = lambda _id: None
+    server.settings = settings
+    server._runner = None
+
+    app = web.Application()
+    app.router.add_post("/alert/flagged", server._handle_flagged)
+    async with TestClient(TestServer(app)) as c:
+        yield c
+
+
+@pytest.mark.asyncio
+async def test_alert_hmac_missing_signature_returns_401(hmac_client):
+    body = {"type": "flagged", "id": 1}
+    resp = await hmac_client.post(
+        "/alert/flagged",
+        headers={"X-Internal-Key": "test-secret"},
+        json=body,
+    )
+    assert resp.status == 401
+
+
+@pytest.mark.asyncio
+async def test_alert_hmac_wrong_signature_returns_401(hmac_client):
+    body = {"type": "flagged", "id": 1}
+    resp = await hmac_client.post(
+        "/alert/flagged",
+        headers={
+            "X-Internal-Key": "test-secret",
+            "X-Signature": "sha256=deadbeef",
+        },
+        json=body,
+    )
+    assert resp.status == 401
+
+
+@pytest.mark.asyncio
+async def test_alert_hmac_valid_signature_returns_ok(hmac_client):
+    body = {"type": "flagged", "id": 42, "flags": {"ad": True}}
+    raw = json.dumps(body).encode("utf-8")
+    sig = _sign("super-hmac", raw)
+    resp = await hmac_client.post(
+        "/alert/flagged",
+        headers={
+            "X-Internal-Key": "test-secret",
+            "X-Signature": sig,
+            "Content-Type": "application/json",
+        },
+        data=raw,
+    )
+    assert resp.status == 200
+
+
+@pytest.mark.asyncio
+async def test_alert_hmac_bad_prefix_returns_401(hmac_client):
+    # 非 sha256= 前缀（如 sha1= / 裸 hex）都应直接拒
+    body = {"type": "flagged", "id": 1}
+    raw = json.dumps(body).encode("utf-8")
+    expected = hmac.new(b"super-hmac", raw, hashlib.sha256).hexdigest()
+    resp = await hmac_client.post(
+        "/alert/flagged",
+        headers={
+            "X-Internal-Key": "test-secret",
+            "X-Signature": expected,  # 缺 "sha256=" 前缀
+        },
+        data=raw,
+    )
+    assert resp.status == 401

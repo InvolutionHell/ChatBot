@@ -21,6 +21,9 @@ payload 形如：
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -35,6 +38,11 @@ from ..email_sender import SmtpConfig, send_email
 log = structlog.get_logger(__name__)
 
 _CST = ZoneInfo("Asia/Shanghai")
+
+
+def _loads_json(raw: bytes) -> dict:
+    """把 raw bytes 解析为 dict（上层用 try/except 兜 JSONDecodeError）。"""
+    return json.loads(raw.decode("utf-8"))
 
 
 class AlertServer(commands.Cog):
@@ -53,26 +61,68 @@ class AlertServer(commands.Cog):
         await self._runner.setup()
         # 绑 0.0.0.0：Backend 跑在 Docker 容器里，从容器内看 127.0.0.1 是容器自己
         # 而不是宿主机，因此必须监听所有接口才能接 docker bridge (host.docker.internal)。
-        # 公网侧安全性由 Oracle VCN ingress + X-Internal-Key header 双重保证。
+        # 公网侧安全性由 Oracle VCN ingress + X-Internal-Key header + 可选 HMAC 签名保证。
         site = web.TCPSite(
             self._runner, host="0.0.0.0", port=self.settings.chatbot_alert_port  # noqa: S104
         )
         await site.start()
         log.info("alert_server_listening", port=self.settings.chatbot_alert_port)
+        # HMAC 没配：允许向前兼容（后端可能还没部署签名逻辑），但必须显式警告
+        if self.settings.webhook_hmac_secret is None:
+            log.warning(
+                "alert_webhook_hmac_disabled",
+                msg="WEBHOOK_HMAC_SECRET 未配置，/alert/flagged 只校验 X-Internal-Key。"
+                " 建议后端上线签名后尽快补上这把密钥。",
+            )
 
     async def cog_unload(self) -> None:
         if self._runner:
             await self._runner.cleanup()
 
+    @staticmethod
+    def _verify_hmac(secret: str, raw_body: bytes, sig_header: str) -> bool:
+        """校验 X-Signature: sha256=<hex> 格式的签名。
+
+        - header 缺失 / 格式不对 / digest 不匹配 → False
+        - 用 hmac.compare_digest 做常量时间比较
+        """
+        if not sig_header or not sig_header.startswith("sha256="):
+            return False
+        provided_hex = sig_header[len("sha256="):].strip()
+        if not provided_hex:
+            return False
+        expected_hex = hmac.new(
+            secret.encode("utf-8"), raw_body, hashlib.sha256
+        ).hexdigest()
+        # 大小写无关比较——避免后端大写/小写差异导致误拒
+        return hmac.compare_digest(provided_hex.lower(), expected_hex.lower())
+
     async def _handle_flagged(self, req: web.Request) -> web.Response:
-        # 鉴权
+        # 鉴权 1：X-Internal-Key（常量时间比较，避免 timing 泄露 key 前缀）
         provided = req.headers.get("X-Internal-Key", "")
         expected = self.settings.internal_api_key.get_secret_value()
-        if not expected or provided != expected:
+        if not expected or not hmac.compare_digest(provided, expected):
             return web.json_response({"ok": False, "msg": "forbidden"}, status=403)
 
+        # 先把原始 body 读出来——HMAC 必须对 raw bytes 算，JSON parse 之后再序列化会漂
+        raw_body = await req.read()
+
+        # 鉴权 2：HMAC-SHA256 签名（可选）。配了 secret 就强校验，没配就跳过。
+        hmac_secret = self.settings.webhook_hmac_secret
+        if hmac_secret is not None:
+            sig_header = req.headers.get("X-Signature", "")
+            if not self._verify_hmac(hmac_secret.get_secret_value(), raw_body, sig_header):
+                log.warning(
+                    "alert_hmac_reject",
+                    has_header=bool(sig_header),
+                    body_len=len(raw_body),
+                )
+                return web.json_response(
+                    {"ok": False, "msg": "invalid signature"}, status=401
+                )
+
         try:
-            payload = await req.json()
+            payload = _loads_json(raw_body)
         except Exception:
             return web.json_response({"ok": False, "msg": "bad json"}, status=400)
 
