@@ -12,6 +12,8 @@ WorkingDirectory=/home/ubuntu/involution-hell-project/ChatBot
 EnvironmentFile=/home/ubuntu/involution-hell-project/backend/.env
 # uv 在 PATH 里（~/.local/bin），systemd 默认 PATH 偏窄，显式给一下
 Environment=PATH=/home/ubuntu/.local/bin:/usr/local/bin:/usr/bin:/bin
+# ProtectHome=read-only 会把 ~/.cache/uv 锁住，uv 起不来。把 cache 挪进项目（ReadWritePaths 已覆盖）。
+Environment=UV_CACHE_DIR=/home/ubuntu/involution-hell-project/ChatBot/.uv-cache
 ExecStart=/home/ubuntu/.local/bin/uv run --no-sync chat-bot
 Restart=on-failure
 RestartSec=5
