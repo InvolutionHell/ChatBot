@@ -67,6 +67,14 @@ _FLAG_REASON = {
 log = structlog.get_logger(__name__)
 
 
+async def _safe(coro, *, name: str) -> None:
+    """包装 background coroutine：异常打进 log，不让 fire-and-forget task 静默失败。"""
+    try:
+        await coro
+    except Exception:
+        log.exception("background_task_failed", task=name)
+
+
 class ShareListener(commands.Cog):
     def __init__(self, bot: commands.Bot, settings: Settings) -> None:
         self.bot = bot
@@ -140,8 +148,10 @@ class ShareListener(commands.Cog):
         )
 
         # 后台轮询拿最终状态，拿到了再发第二条
+        task_name = f"poll_{result.link_id}"
         asyncio.create_task(
-            self._notify_final_status(message, result.link_id)
+            _safe(self._notify_final_status(message, result.link_id), name=task_name),
+            name=task_name,
         )
 
     async def _notify_final_status(self, message: discord.Message, link_id: int) -> None:
