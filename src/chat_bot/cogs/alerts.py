@@ -71,8 +71,9 @@ class AlertServer(commands.Cog):
         if self.settings.webhook_hmac_secret is None:
             log.warning(
                 "alert_webhook_hmac_disabled",
-                msg="WEBHOOK_HMAC_SECRET 未配置，/alert/flagged 只校验 X-Internal-Key。"
-                " 建议后端上线签名后尽快补上这把密钥。",
+                msg="WEBHOOK_HMAC_SECRET 未配置：/alert/flagged 只做 X-Internal-Key"
+                " 校验，不验签。属于过渡模式（backend 尚未发出签名）。backend 上线"
+                " 签名后，把密钥同步到本服务 env 即可启用。",
             )
 
     async def cog_unload(self) -> None:
