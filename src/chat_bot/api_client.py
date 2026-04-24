@@ -94,7 +94,7 @@ async def submit_internal(
 
     异常：
     - DuplicateURL：后端 409，URL 已被提交过
-    - InternalAPIError：其它 4xx/5xx
+    - InternalAPIError：其它 4xx/5xx，或 2xx 但 body 不是合法 JSON（_safe_json 抛）
     - httpx 原生的网络异常不包装，直接向上抛
     """
     payload = {
@@ -130,7 +130,7 @@ async def fetch_link(
 ) -> LinkDetail | None:
     """GET /api/community/links/internal/{id}。用于轮询 async 富化后的最终状态。
 
-    404 时返回 None；其它错误抛 InternalAPIError。
+    404 时返回 None；其它 4xx/5xx 或 body 非 JSON 一律抛 InternalAPIError。
     """
     url = base_url.rstrip("/") + f"/{link_id}"
     headers = {"X-Internal-Key": internal_key}
@@ -159,7 +159,10 @@ async def fetch_summary(
     sample_limit: int = 5,
     timeout: float = 10.0,
 ) -> AdminSummary:
-    """GET /api/community/links/internal/summary。"""
+    """GET /api/community/links/internal/summary。
+
+    4xx/5xx 或 body 非 JSON 都抛 InternalAPIError。
+    """
     url = base_url.rstrip("/") + "/summary"
     headers = {"X-Internal-Key": internal_key}
     async with httpx.AsyncClient(timeout=timeout) as client:

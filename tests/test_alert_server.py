@@ -5,6 +5,8 @@
 - X-Internal-Key 校验（无/错/对）
 - payload JSON 解析
 - type 必须是 flagged
+- HMAC-SHA256 签名分支：缺 header / 错签名 / 错前缀 / 正确签名
+- 鉴权先后顺序：X-Internal-Key 先于 HMAC（签名对但 key 错应 403 而非 401）
 """
 
 from __future__ import annotations
