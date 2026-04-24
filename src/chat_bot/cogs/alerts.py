@@ -1,11 +1,15 @@
 """FLAGGED 告警即时推送 Cog。
 
-Bot 内嵌一个 aiohttp 服务器（127.0.0.1:CHATBOT_ALERT_PORT），接收后端
+Bot 内嵌一个 aiohttp 服务器（0.0.0.0:CHATBOT_ALERT_PORT），接收后端
 SharedLinkEnrichmentWorker 在判定 status=FLAGGED 时 fire 的 webhook POST。
 收到后立即推送 Discord 管理员频道 + 邮件，不走每日 digest。
 
-鉴权：X-Internal-Key header，和后端共用同一把密钥。
-loopback 端口：和后端同机，不经 Caddy 不开公网，纯内网通信。
+为什么绑 0.0.0.0 而不是 127.0.0.1：backend 跑在 Docker 容器里，从容器看
+宿主机是 docker bridge (host.docker.internal)，只绑 loopback 接不到。
+对外暴露面由三层兜：
+  (a) X-Internal-Key 常量时间比较，防 timing 猜解
+  (b) 可选 HMAC-SHA256 签名（WEBHOOK_HMAC_SECRET 配了就强校验）
+  (c) 上游 Oracle VCN ingress / Docker networking 决定哪些 IP 能打过来
 
 payload 形如：
 {

@@ -51,7 +51,10 @@ class Settings(BaseSettings):
     digest_time_cst: str = Field("09:00", alias="DIGEST_TIME_CST")
 
     # ---------- FLAGGED 实时 alert ----------
-    # 后端 webhook → Bot 内嵌 aiohttp server 接收端口，只绑 127.0.0.1
+    # 后端 webhook → Bot 内嵌 aiohttp server 接收端口。实际绑 0.0.0.0:<port>
+    # （backend 在 Docker 容器里，只绑 127.0.0.1 的话容器过不来）。暴露面靠
+    # X-Internal-Key 常量时间比较 + 可选 HMAC 签名 + 上游 firewall / Docker
+    # networking 共同兜。
     chatbot_alert_port: int = Field(6200, alias="CHATBOT_ALERT_PORT")
     # HMAC-SHA256 共享密钥（可选）。配了之后 /alert/flagged 会强校验
     # X-Signature: sha256=<hex> = HMAC(secret, raw_body)。没配时跳过这层。
