@@ -51,9 +51,11 @@ class AlertServer(commands.Cog):
         app.router.add_post("/alert/flagged", self._handle_flagged)
         self._runner = web.AppRunner(app, access_log=None)
         await self._runner.setup()
-        # 只绑 127.0.0.1，外网不可达
+        # 绑 0.0.0.0：Backend 跑在 Docker 容器里，从容器内看 127.0.0.1 是容器自己
+        # 而不是宿主机，因此必须监听所有接口才能接 docker bridge (host.docker.internal)。
+        # 公网侧安全性由 Oracle VCN ingress + X-Internal-Key header 双重保证。
         site = web.TCPSite(
-            self._runner, host="127.0.0.1", port=self.settings.chatbot_alert_port
+            self._runner, host="0.0.0.0", port=self.settings.chatbot_alert_port  # noqa: S104
         )
         await site.start()
         log.info("alert_server_listening", port=self.settings.chatbot_alert_port)
