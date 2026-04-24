@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import asyncio
 import re
+from collections.abc import Coroutine
+from typing import Any
 from urllib.parse import urlparse
 
 import discord
@@ -67,8 +69,12 @@ _FLAG_REASON = {
 log = structlog.get_logger(__name__)
 
 
-async def _safe(coro, *, name: str) -> None:
-    """包装 background coroutine：异常打进 log，不让 fire-and-forget task 静默失败。"""
+async def _safe(coro: Coroutine[Any, Any, Any], *, name: str) -> None:
+    """包装 background coroutine：异常打进 log，不让 fire-and-forget task 静默失败。
+
+    注意：except Exception 不会捕到 CancelledError（3.12 起 CancelledError
+    继承自 BaseException），所以 bot 优雅退出时取消 task 的行为不会被这里吞掉。
+    """
     try:
         await coro
     except Exception:
