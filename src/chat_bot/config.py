@@ -26,8 +26,11 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=ENV_FILE if Path(ENV_FILE).exists() else None,
         env_file_encoding="utf-8",
-        # forbid：有 typo 的 env 变量直接报错，避免"改了 key 但没人发现"
-        extra="forbid",
+        # ChatBot 读取的是 backend 共享 .env，里头含大量非本服务的 key（PG*/
+        # SPRING_*/OPENAI_* 等），开 forbid 会在启动期直接炸出 ~28 个
+        # validation error。改用 ignore 兜底。
+        # 未来若把 ChatBot 切到独立 .env，可以回到 forbid 以获得 typo 检测。
+        extra="ignore",
         case_sensitive=False,
     )
 
