@@ -1,26 +1,41 @@
-"""频道消息监听 Cog：从消息里抽链接 → 调后端 internal API。
+"""频道消息监听 Cog：从消息里抽链接 → 调后端 internal API → 回用户告知结果。
 
-Bot 只做转发工作：
-- URL 正则匹配
-- 频道白名单过滤
-- 调 api_client.submit_internal
-- 成功 / 去重 / 失败打日志，不回消息（被动网，不打扰群聊）
-
-OG 抓取 / DeepSeek 分类 / 入库 全部在后端 SharedLinkEnrichmentWorker 里完成。
+UX 流程：
+1. 用户在 #分享 频道发带链接消息
+2. Bot 立即 reply @用户：「感谢大佬分享！正在审核」
+3. 后端 @Async SharedLinkEnrichmentWorker 跑 OG + DeepSeek，Bot 后台轮询
+4. 拿到终态后 Bot 再 reply：
+   - APPROVED       → 安静收尾（首条 reply 已经说"感谢"）
+   - PENDING_MANUAL → 「需要人工复核，稍后上架。有疑问找管理员」
+   - FLAGGED        → 「AI 复核触发 xxx flag，管理员已收到通知」
+5. 轮询最多 30s（enrichment 通常 2-5s 内完成），超时静默
 """
 
 from __future__ import annotations
 
+import asyncio
 import re
 
 import discord
 import structlog
 from discord.ext import commands
 
-from ..api_client import DuplicateURL, InternalAPIError, submit_internal
+from ..api_client import DuplicateURL, InternalAPIError, fetch_link, submit_internal
 from ..config import Settings
 
 _URL_RE = re.compile(r"https?://[^\s<>\"'\]\)]+", re.IGNORECASE)
+
+# 轮询最终状态的参数：每 2s 查一次，最多 30s
+_POLL_INTERVAL_SEC = 2.0
+_POLL_TIMEOUT_SEC = 30.0
+_TERMINAL_STATUSES = {"APPROVED", "PENDING_MANUAL", "FLAGGED", "REJECTED", "ARCHIVED"}
+
+# flag → 可读原因（中文）
+_FLAG_REASON = {
+    "nsfw": "不适内容",
+    "ad": "疑似广告",
+    "flame": "疑似引战",
+}
 
 log = structlog.get_logger(__name__)
 
@@ -32,10 +47,8 @@ class ShareListener(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
-        # 跳过 bot 自己 / 系统消息 / webhook
         if message.author.bot or message.webhook_id is not None:
             return
-        # 只处理监听频道里的消息
         if message.channel.id not in self.settings.watch_channel_ids:
             return
 
@@ -47,6 +60,7 @@ class ShareListener(commands.Cog):
             await self._handle_one_url(message, url)
 
     async def _handle_one_url(self, message: discord.Message, url: str) -> None:
+        """提交单个 URL，并根据后端响应给用户即时反馈 + 延迟最终状态通知。"""
         try:
             result = await submit_internal(
                 base_url=self.settings.internal_submit_url,
@@ -56,23 +70,27 @@ class ShareListener(commands.Cog):
                 timeout=self.settings.chatbot_api_timeout,
             )
         except DuplicateURL:
-            log.info(
-                "share_duplicate",
-                url=url,
-                submitter=message.author.display_name,
+            log.info("share_duplicate", url=url, submitter=message.author.display_name)
+            # 去重也给个反馈，不让用户发完一头雾水
+            await self._safe_reply(
+                message,
+                f"感谢 {message.author.mention} 分享！这条链接已经在分享库里啦 ✨",
             )
             return
         except InternalAPIError as e:
-            log.error(
-                "share_api_error",
-                url=url,
-                status=e.status,
-                message=e.message,
+            log.error("share_api_error", url=url, status=e.status, message=e.message)
+            await self._safe_reply(
+                message,
+                f"{message.author.mention} 提交这条链接时后端返回了 {e.status}，"
+                "已通知管理员排查 🙏",
             )
             return
         except Exception as e:
-            # 网络、解析等非 API 错误
             log.error("share_unexpected_error", url=url, error=str(e))
+            await self._safe_reply(
+                message,
+                f"{message.author.mention} 提交出错了，已通知管理员 🙏",
+            )
             return
 
         log.info(
@@ -82,6 +100,100 @@ class ShareListener(commands.Cog):
             status=result.status,
             submitter=message.author.display_name,
         )
+
+        # 第一条 reply：立即感谢，告诉用户已经在审核
+        await self._safe_reply(
+            message,
+            f"感谢 {message.author.mention} 大佬分享！正在过审核，"
+            f"通过后会上架 [内卷地狱分享库](<https://involutionhell.com/share>) #{result.link_id}",
+        )
+
+        # 后台轮询拿最终状态，拿到了再发第二条
+        asyncio.create_task(
+            self._notify_final_status(message, result.link_id)
+        )
+
+    async def _notify_final_status(self, message: discord.Message, link_id: int) -> None:
+        """后台任务：轮询 /internal/{id} 拿终态，再 reply 通知用户。"""
+        deadline = _POLL_TIMEOUT_SEC
+        elapsed = 0.0
+        while elapsed < deadline:
+            await asyncio.sleep(_POLL_INTERVAL_SEC)
+            elapsed += _POLL_INTERVAL_SEC
+            try:
+                detail = await fetch_link(
+                    base_url=self.settings.internal_submit_url,
+                    internal_key=self.settings.internal_api_key.get_secret_value(),
+                    link_id=link_id,
+                    timeout=self.settings.chatbot_api_timeout,
+                )
+            except Exception as e:
+                log.warning("poll_final_status_failed", link_id=link_id, error=str(e))
+                return
+            if detail is None:
+                return
+            if detail.status in _TERMINAL_STATUSES:
+                await self._send_status_update(message, detail, link_id)
+                return
+
+        log.info("poll_final_status_timeout", link_id=link_id)
+
+    async def _send_status_update(
+        self, message: discord.Message, detail, link_id: int
+    ) -> None:
+        """按终态发对应的 reply。"""
+        user = message.author.mention
+        status = detail.status
+
+        if status == "APPROVED":
+            # 已自动通过——第一条 reply 已经说了，这里短讯收尾即可
+            await self._safe_reply(
+                message,
+                f"🎉 {user} 已上架 · #{link_id} "
+                f"[点此查看](<https://involutionhell.com/share>)",
+            )
+            return
+
+        if status == "PENDING_MANUAL":
+            await self._safe_reply(
+                message,
+                f"⏳ {user} 非白名单域名（`{detail.host}`），"
+                f"需要管理员人工复核 · #{link_id}。若长时间未通过可私信管理员 🙏",
+            )
+            return
+
+        if status == "FLAGGED":
+            # 无法直接从 LinkDetail 拿到 flags，只能给个通用文案
+            await self._safe_reply(
+                message,
+                f"⚠️ {user} AI 审核认为这条命中敏感标签（nsfw / 广告 / 引战 其一），"
+                f"已进入人工复核队列 · #{link_id}。"
+                f"如果你认为是误判，欢迎私信管理员 appeal 🙏",
+            )
+            return
+
+        if status == "REJECTED":
+            await self._safe_reply(
+                message,
+                f"❌ {user} 这条已被管理员拒绝 · #{link_id}。"
+                f"如有疑问欢迎私信管理员",
+            )
+            return
+
+        if status == "ARCHIVED":
+            await self._safe_reply(
+                message,
+                f"📦 {user} 这条链接已被系统归档（原文失效）· #{link_id}",
+            )
+            return
+
+    @staticmethod
+    async def _safe_reply(message: discord.Message, content: str) -> None:
+        """message.reply 有可能失败（消息被删 / 权限变更），catch 住不让后台任务炸。"""
+        try:
+            await message.reply(content, mention_author=False)
+        except Exception as e:
+            log.warning("reply_failed", error=str(e))
 
 
 async def setup(bot: commands.Bot) -> None:
