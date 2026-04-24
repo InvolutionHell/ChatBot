@@ -6,9 +6,13 @@ Bot 只负责「把 URL + 提交人名 从 Discord 搬到后端」这一步。
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 import httpx
+import structlog
+
+log = structlog.get_logger(__name__)
 
 
 class DuplicateURL(Exception):
@@ -54,6 +58,28 @@ class AdminSummary:
     pending_samples: list[dict]  # {id, host, url}
 
 
+def _safe_json(resp: httpx.Response, *, endpoint: str) -> dict:
+    """安全解析 resp.json()：失败不让调用方吃 raw ValueError，统一抛 InternalAPIError。
+
+    - 后端异常时偶尔会吐 HTML 错误页 / gateway 的纯文本 → JSONDecodeError
+    - 记录 status + body 前 200 字符，便于日志排查
+    """
+    try:
+        return resp.json()
+    except (json.JSONDecodeError, ValueError) as e:
+        preview = (resp.text or "")[:200]
+        log.warning(
+            "api_bad_json",
+            endpoint=endpoint,
+            status=resp.status_code,
+            body_preview=preview,
+        )
+        raise InternalAPIError(
+            resp.status_code,
+            f"invalid JSON from {endpoint}: {e}; body[:200]={preview!r}",
+        ) from e
+
+
 async def submit_internal(
     base_url: str,
     internal_key: str,
@@ -84,7 +110,7 @@ async def submit_internal(
     if resp.status_code >= 400:
         raise InternalAPIError(resp.status_code, resp.text)
 
-    body = resp.json()
+    body = _safe_json(resp, endpoint="submit_internal")
     data = body.get("data") or {}
     return SubmitResult(
         link_id=data.get("id", 0),
@@ -112,7 +138,7 @@ async def fetch_link(
         return None
     if resp.status_code >= 400:
         raise InternalAPIError(resp.status_code, resp.text)
-    data = (resp.json() or {}).get("data") or {}
+    data = (_safe_json(resp, endpoint="fetch_link") or {}).get("data") or {}
     return LinkDetail(
         link_id=data.get("id", 0),
         status=data.get("status", "UNKNOWN"),
@@ -138,7 +164,7 @@ async def fetch_summary(
         resp = await client.get(url, headers=headers, params={"sampleLimit": sample_limit})
     if resp.status_code >= 400:
         raise InternalAPIError(resp.status_code, resp.text)
-    data = (resp.json() or {}).get("data") or {}
+    data = (_safe_json(resp, endpoint="fetch_summary") or {}).get("data") or {}
     return AdminSummary(
         pending_manual=data.get("pendingManual", 0),
         flagged=data.get("flagged", 0),
