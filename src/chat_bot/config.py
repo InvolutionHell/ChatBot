@@ -26,7 +26,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=ENV_FILE if Path(ENV_FILE).exists() else None,
         env_file_encoding="utf-8",
-        extra="ignore",
+        # forbid：有 typo 的 env 变量直接报错，避免"改了 key 但没人发现"
+        extra="forbid",
         case_sensitive=False,
     )
 
@@ -49,6 +50,9 @@ class Settings(BaseSettings):
     # ---------- FLAGGED 实时 alert ----------
     # 后端 webhook → Bot 内嵌 aiohttp server 接收端口，只绑 127.0.0.1
     chatbot_alert_port: int = Field(6200, alias="CHATBOT_ALERT_PORT")
+    # HMAC-SHA256 共享密钥（可选）。配了之后 /alert/flagged 会强校验
+    # X-Signature: sha256=<hex> = HMAC(secret, raw_body)。没配时跳过这层。
+    webhook_hmac_secret: SecretStr | None = Field(None, alias="WEBHOOK_HMAC_SECRET")
 
     # ---------- Gmail SMTP ----------
     # 未填时不发邮件（但 Discord 推送仍走）
@@ -56,7 +60,12 @@ class Settings(BaseSettings):
     gmail_app_password: SecretStr = Field(SecretStr(""), alias="GMAIL_APP_PASSWORD")
     digest_email_to: str = Field("", alias="DIGEST_EMAIL_TO")
 
-    @field_validator("discord_guild_id", "discord_admin_channel_id", mode="before")
+    @field_validator(
+        "discord_guild_id",
+        "discord_admin_channel_id",
+        "webhook_hmac_secret",
+        mode="before",
+    )
     @classmethod
     def _empty_to_none(cls, v: object) -> object:
         if isinstance(v, str) and v.strip() == "":
