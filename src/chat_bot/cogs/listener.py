@@ -191,7 +191,7 @@ class ShareListener(commands.Cog):
         await self._safe_reply(
             message,
             f"感谢 {message.author.mention} 大佬分享！正在过审核，"
-            f"通过后会上架 [内卷地狱分享库](<https://involutionhell.com/share>) #{result.link_id}",
+            f"通过后会上架 [内卷地狱分享库](<https://involutionhell.com/feed>) #{result.link_id}",
         )
 
         # 后台轮询拿最终状态，拿到了再发第二条
@@ -238,7 +238,7 @@ class ShareListener(commands.Cog):
             await self._safe_reply(
                 message,
                 f"🎉 {user} 已上架 · #{link_id} "
-                f"[点此查看](<https://involutionhell.com/share>)",
+                f"[点此查看](<https://involutionhell.com/feed>)",
             )
             return
 

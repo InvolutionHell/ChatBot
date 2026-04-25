@@ -86,7 +86,7 @@ class ShareCommands(commands.Cog):
         # 小字 caption 用 `-# ...` 语法（Discord 的 subtext 行，显示为灰色细字）
         content = (
             f"{url}\n"
-            f"-# ✅ 已收录到 [内卷地狱分享库](https://involutionhell.com/share) "
+            f"-# ✅ 已收录到 [内卷地狱分享库](https://involutionhell.com/feed) "
             f"· `#{result.link_id}` · by {interaction.user.display_name}"
         )
         if recommendation:
