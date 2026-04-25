@@ -34,6 +34,59 @@ def test_should_skip_discord_urls(url: str) -> None:
 @pytest.mark.parametrize(
     "url",
     [
+        # 这次实事故的 klipy GIF
+        "https://klipy.com/gifs/hello-8126--k01KQ1SBY07FP9N8QRABJGVNGQC",
+        # Tenor（Discord 贴纸面板默认）
+        "https://tenor.com/view/cat-cute-gif-1234567",
+        "https://media.tenor.com/AbCdEfGhIj/cat.gif",
+        # Giphy（也常见）
+        "https://giphy.com/gifs/cat-cute-AbCdEfGhIj",
+        "https://media2.giphy.com/media/AbCdEfGhIj/giphy.gif",
+        # Klipy CDN
+        "https://media.klipy.com/some.gif",
+    ],
+)
+def test_should_skip_sticker_gif_aggregators(url: str) -> None:
+    assert _should_skip(url) is True
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        # 裸图片（WeChat 图床、随便哪个 host 的图片直链）
+        "https://mmbiz.qpic.cn/mmbiz_jpg/abc/640.jpg",
+        "https://example.com/path/photo.PNG",
+        "https://i.example.com/cat.gif",
+        "https://example.com/foo.webp",
+        # 视频/音频直链
+        "https://example.com/clip.mp4",
+        "https://example.com/audio.mp3",
+        # SVG（即便 host 不在黑名单也拦，配合服务端 SVG 上传黑名单）
+        "https://example.com/icon.svg",
+    ],
+)
+def test_should_skip_bare_media_files(url: str) -> None:
+    assert _should_skip(url) is True
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        # path 不带媒体扩展，但 query 里出现 .jpg —— 不该误命中
+        "https://example.com/api?file=foo.jpg",
+        # 微信公众号文章 URL（典型分享）
+        "https://mp.weixin.qq.com/s/abc",
+        # 小红书帖子（path 没扩展名）
+        "https://www.xiaohongshu.com/explore/abc123",
+    ],
+)
+def test_should_not_skip_normal_articles_with_media_query(url: str) -> None:
+    assert _should_skip(url) is False
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
         "https://arxiv.org/abs/2501.00001",
         "https://mp.weixin.qq.com/s/abc",
         "https://github.com/InvolutionHell/ChatBot",

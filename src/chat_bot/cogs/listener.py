@@ -28,31 +28,72 @@ from ..config import Settings
 
 _URL_RE = re.compile(r"https?://[^\s<>\"'\]\)]+", re.IGNORECASE)
 
-# 跳过 Discord 自身的各种链接：用户经常复制错（比如右键"复制消息链接"会粘
-# discord.com/channels/.../... 出来，这不该被当作"分享"入库）。静默忽略，不
-# 回复也不提交，像 bot 没看到一样。
+# 跳过的链接源。两层：
+#   1. Discord 自身（消息链接 / 附件 CDN）—— 用户复制消息链接时常误粘
+#   2. 贴纸 / GIF / meme 聚合站 —— Discord 内置贴纸面板会发 tenor/klipy/giphy
+#      链接出来，message.content 里就是裸 URL。这些不是"分享资源"，不该入库
+# 静默忽略，不回复不提交，像 bot 没看到一样。
 _SKIP_HOSTS = frozenset({
-    # 主站
+    # Discord 主站
     "discord.com",
     "www.discord.com",
     "canary.discord.com",
     "ptb.discord.com",
-    # 邀请短链
+    # Discord 邀请短链
     "discord.gg",
-    # 附件 / CDN
+    # Discord 附件 / CDN
     "discordapp.com",
     "cdn.discordapp.com",
     "media.discordapp.net",
+    # 贴纸 / GIF 聚合（Discord 贴纸面板默认走这些）
+    "tenor.com",
+    "media.tenor.com",
+    "c.tenor.com",
+    "giphy.com",
+    "media.giphy.com",
+    "media0.giphy.com",
+    "media1.giphy.com",
+    "media2.giphy.com",
+    "media3.giphy.com",
+    "media4.giphy.com",
+    "klipy.com",
+    "media.klipy.com",
 })
+
+# 兜底：只指向静态媒体文件的 URL（路径以这些扩展名结尾）一律跳过——常见于
+# WeChat / 各种图床的裸图片链接，非分享资源。把扩展名匹配做在 path 上避免误伤
+# 带 query 的正常链接（query 里出现 .jpg 不算）。
+_MEDIA_EXTENSIONS = (
+    ".gif",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    ".bmp",
+    ".svg",
+    ".ico",
+    ".mp4",
+    ".webm",
+    ".mov",
+    ".m4v",
+    ".mp3",
+    ".wav",
+    ".ogg",
+    ".flac",
+)
 
 
 def _should_skip(url: str) -> bool:
-    """URL 是否属于需要跳过的源（当前只屏蔽 Discord 自身域名）。"""
+    """URL 是否属于需要跳过的源：Discord 域、贴纸聚合、或裸媒体文件。"""
     try:
-        host = urlparse(url).netloc.lower().split(":")[0]
+        parsed = urlparse(url)
     except Exception:
         return False
-    return host in _SKIP_HOSTS
+    host = parsed.netloc.lower().split(":")[0]
+    if host in _SKIP_HOSTS:
+        return True
+    # path 走小写匹配，跟 query 解耦：?foo=bar.jpg 不会误命中
+    return parsed.path.lower().endswith(_MEDIA_EXTENSIONS)
 
 # 轮询最终状态的参数：每 2s 查一次，最多 30s
 _POLL_INTERVAL_SEC = 2.0
