@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=ENV_FILE if Path(ENV_FILE).exists() else None,
         env_file_encoding="utf-8",
+        # ChatBot 读取的是 backend 共享 .env，里头含大量非本服务的 key（PG*/
+        # SPRING_*/OPENAI_* 等），开 forbid 会在启动期直接炸出 ~28 个
+        # validation error。改用 ignore 兜底。
+        # 未来若把 ChatBot 切到独立 .env，可以回到 forbid 以获得 typo 检测。
         extra="ignore",
         case_sensitive=False,
     )
@@ -47,8 +51,14 @@ class Settings(BaseSettings):
     digest_time_cst: str = Field("09:00", alias="DIGEST_TIME_CST")
 
     # ---------- FLAGGED 实时 alert ----------
-    # 后端 webhook → Bot 内嵌 aiohttp server 接收端口，只绑 127.0.0.1
+    # 后端 webhook → Bot 内嵌 aiohttp server 接收端口。实际绑 0.0.0.0:<port>
+    # （backend 在 Docker 容器里，只绑 127.0.0.1 的话容器过不来）。暴露面靠
+    # X-Internal-Key 常量时间比较 + 可选 HMAC 签名 + 上游 firewall / Docker
+    # networking 共同兜。
     chatbot_alert_port: int = Field(6200, alias="CHATBOT_ALERT_PORT")
+    # HMAC-SHA256 共享密钥（可选）。配了之后 /alert/flagged 会强校验
+    # X-Signature: sha256=<hex> = HMAC(secret, raw_body)。没配时跳过这层。
+    webhook_hmac_secret: SecretStr | None = Field(None, alias="WEBHOOK_HMAC_SECRET")
 
     # ---------- Gmail SMTP ----------
     # 未填时不发邮件（但 Discord 推送仍走）
@@ -56,7 +66,12 @@ class Settings(BaseSettings):
     gmail_app_password: SecretStr = Field(SecretStr(""), alias="GMAIL_APP_PASSWORD")
     digest_email_to: str = Field("", alias="DIGEST_EMAIL_TO")
 
-    @field_validator("discord_guild_id", "discord_admin_channel_id", mode="before")
+    @field_validator(
+        "discord_guild_id",
+        "discord_admin_channel_id",
+        "webhook_hmac_secret",
+        mode="before",
+    )
     @classmethod
     def _empty_to_none(cls, v: object) -> object:
         if isinstance(v, str) and v.strip() == "":

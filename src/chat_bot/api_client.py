@@ -6,9 +6,13 @@ Bot 只负责「把 URL + 提交人名 从 Discord 搬到后端」这一步。
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 import httpx
+import structlog
+
+log = structlog.get_logger(__name__)
 
 
 class DuplicateURL(Exception):
@@ -54,6 +58,30 @@ class AdminSummary:
     pending_samples: list[dict]  # {id, host, url}
 
 
+def _safe_json(resp: httpx.Response, *, endpoint: str) -> dict:
+    """安全解析 resp.json()：失败不让调用方吃 raw ValueError，统一抛 InternalAPIError。
+
+    - 后端异常时偶尔会吐 HTML 错误页 / gateway 的纯文本 → JSONDecodeError
+    - 记录 status + body 前 200 字节（不走 resp.text，避免解码整个大 body
+      或在错误处理路径上再抛一次 UnicodeDecodeError 把原始 JSON 错因盖掉）
+    """
+    try:
+        return resp.json()
+    except (json.JSONDecodeError, ValueError) as e:
+        # 只切前 200 字节，再用 replace 策略解码——坏字节变成 U+FFFD 而不是抛
+        preview = resp.content[:200].decode("utf-8", errors="replace")
+        log.warning(
+            "api_bad_json",
+            endpoint=endpoint,
+            status=resp.status_code,
+            body_preview=preview,
+        )
+        raise InternalAPIError(
+            resp.status_code,
+            f"invalid JSON from {endpoint}: {e}; body[:200]={preview!r}",
+        ) from e
+
+
 async def submit_internal(
     base_url: str,
     internal_key: str,
@@ -66,7 +94,7 @@ async def submit_internal(
 
     异常：
     - DuplicateURL：后端 409，URL 已被提交过
-    - InternalAPIError：其它 4xx/5xx
+    - InternalAPIError：其它 4xx/5xx，或 2xx 但 body 不是合法 JSON（_safe_json 抛）
     - httpx 原生的网络异常不包装，直接向上抛
     """
     payload = {
@@ -84,7 +112,7 @@ async def submit_internal(
     if resp.status_code >= 400:
         raise InternalAPIError(resp.status_code, resp.text)
 
-    body = resp.json()
+    body = _safe_json(resp, endpoint="submit_internal")
     data = body.get("data") or {}
     return SubmitResult(
         link_id=data.get("id", 0),
@@ -102,7 +130,7 @@ async def fetch_link(
 ) -> LinkDetail | None:
     """GET /api/community/links/internal/{id}。用于轮询 async 富化后的最终状态。
 
-    404 时返回 None；其它错误抛 InternalAPIError。
+    404 时返回 None；其它 4xx/5xx 或 body 非 JSON 一律抛 InternalAPIError。
     """
     url = base_url.rstrip("/") + f"/{link_id}"
     headers = {"X-Internal-Key": internal_key}
@@ -112,7 +140,7 @@ async def fetch_link(
         return None
     if resp.status_code >= 400:
         raise InternalAPIError(resp.status_code, resp.text)
-    data = (resp.json() or {}).get("data") or {}
+    data = (_safe_json(resp, endpoint="fetch_link") or {}).get("data") or {}
     return LinkDetail(
         link_id=data.get("id", 0),
         status=data.get("status", "UNKNOWN"),
@@ -131,14 +159,17 @@ async def fetch_summary(
     sample_limit: int = 5,
     timeout: float = 10.0,
 ) -> AdminSummary:
-    """GET /api/community/links/internal/summary。"""
+    """GET /api/community/links/internal/summary。
+
+    4xx/5xx 或 body 非 JSON 都抛 InternalAPIError。
+    """
     url = base_url.rstrip("/") + "/summary"
     headers = {"X-Internal-Key": internal_key}
     async with httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.get(url, headers=headers, params={"sampleLimit": sample_limit})
     if resp.status_code >= 400:
         raise InternalAPIError(resp.status_code, resp.text)
-    data = (resp.json() or {}).get("data") or {}
+    data = (_safe_json(resp, endpoint="fetch_summary") or {}).get("data") or {}
     return AdminSummary(
         pending_manual=data.get("pendingManual", 0),
         flagged=data.get("flagged", 0),

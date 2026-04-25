@@ -96,7 +96,7 @@ INTERNAL_API_KEY=...（openssl rand -hex 32）
 ### 3. 跑起来
 
 ```bash
-cd /home/ubuntu/ChatBot
+cd /home/ubuntu/involution-hell-project/ChatBot
 uv sync
 uv run chat-bot
 ```
