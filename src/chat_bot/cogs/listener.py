@@ -28,31 +28,105 @@ from ..config import Settings
 
 _URL_RE = re.compile(r"https?://[^\s<>\"'\]\)]+", re.IGNORECASE)
 
-# 跳过 Discord 自身的各种链接：用户经常复制错（比如右键"复制消息链接"会粘
-# discord.com/channels/.../... 出来，这不该被当作"分享"入库）。静默忽略，不
-# 回复也不提交，像 bot 没看到一样。
+# 跳过的链接源。两层：
+#   1. Discord 自身（消息链接 / 附件 CDN）—— 用户复制消息链接时常误粘
+#   2. 贴纸 / GIF / meme 聚合站 —— Discord 内置贴纸面板会发 tenor/klipy/giphy
+#      链接出来，message.content 里就是裸 URL。这些不是"分享资源"，不该入库
+# 静默忽略，不回复不提交，像 bot 没看到一样。
 _SKIP_HOSTS = frozenset({
-    # 主站
+    # Discord 主站
     "discord.com",
     "www.discord.com",
     "canary.discord.com",
     "ptb.discord.com",
-    # 邀请短链
+    # Discord 邀请短链
     "discord.gg",
-    # 附件 / CDN
+    # Discord 附件 / CDN
     "discordapp.com",
     "cdn.discordapp.com",
     "media.discordapp.net",
+    # 贴纸 / GIF 聚合（Discord 贴纸面板默认走这些）
+    "tenor.com",
+    "media.tenor.com",
+    "c.tenor.com",
+    "giphy.com",
+    "media.giphy.com",
+    "media0.giphy.com",
+    "media1.giphy.com",
+    "media2.giphy.com",
+    "media3.giphy.com",
+    "media4.giphy.com",
+    "klipy.com",
+    "media.klipy.com",
 })
+
+# 兜底：只指向静态媒体文件的 URL（路径以这些扩展名结尾）一律跳过——常见于
+# WeChat / 各种图床的裸图片链接，非分享资源。把扩展名匹配做在 path 上避免误伤
+# 带 query 的正常链接（query 里出现 .jpg 不算）。
+_MEDIA_EXTENSIONS = (
+    ".gif",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    ".bmp",
+    ".svg",
+    ".ico",
+    ".mp4",
+    ".webm",
+    ".mov",
+    ".m4v",
+    ".mp3",
+    ".wav",
+    ".ogg",
+    ".flac",
+)
+
+
+_INTERNAL_GITHUB_ORG = "involutionhell"  # GitHub 路径不区分大小写，统一比小写
+
+
+def _is_self_org_github_chatter(parsed) -> bool:
+    """github.com/InvolutionHell/<repo>/<sub-path> 视为内部 dev 讨论，不入分享库。
+
+    放行 case：
+      - github.com/InvolutionHell/<repo>          仓库主页（"安利自家工具"这种正常分享）
+      - github.com/InvolutionHell/<repo>/         同上，带尾斜杠
+      - github.com/InvolutionHell                 org 主页（罕见，但放行）
+      - github.com/<其它 org>/...                 第三方仓库的任何路径
+
+    拦截 case：
+      - github.com/InvolutionHell/<repo>/pull/N
+      - github.com/InvolutionHell/<repo>/issues/N
+      - github.com/InvolutionHell/<repo>/commit/<sha>
+      - github.com/InvolutionHell/<repo>/blob/...
+      - github.com/InvolutionHell/<repo>/tree/...
+      - github.com/InvolutionHell/<repo>/actions/...
+      - github.com/InvolutionHell/<repo>/discussions/...
+      - github.com/InvolutionHell/<repo>/releases/tag/...
+      —— 这些是 PR/issue 自动通知或 dev 联调时贴的，不是给社区"上架"的资源
+    """
+    host = parsed.netloc.lower().split(":")[0]
+    if host not in {"github.com", "www.github.com"}:
+        return False
+    segs = [s for s in parsed.path.split("/") if s]
+    # /<org>/<repo>/<sub-path...>  (>= 3 段才算 dev 子路径)
+    return len(segs) >= 3 and segs[0].lower() == _INTERNAL_GITHUB_ORG
 
 
 def _should_skip(url: str) -> bool:
-    """URL 是否属于需要跳过的源（当前只屏蔽 Discord 自身域名）。"""
+    """URL 是否属于需要跳过的源：Discord 域、贴纸聚合、自家 GitHub dev 子路径、或裸媒体文件。"""
     try:
-        host = urlparse(url).netloc.lower().split(":")[0]
+        parsed = urlparse(url)
     except Exception:
         return False
-    return host in _SKIP_HOSTS
+    host = parsed.netloc.lower().split(":")[0]
+    if host in _SKIP_HOSTS:
+        return True
+    if _is_self_org_github_chatter(parsed):
+        return True
+    # path 走小写匹配，跟 query 解耦：?foo=bar.jpg 不会误命中
+    return parsed.path.lower().endswith(_MEDIA_EXTENSIONS)
 
 # 轮询最终状态的参数：每 2s 查一次，最多 30s
 _POLL_INTERVAL_SEC = 2.0
@@ -150,7 +224,7 @@ class ShareListener(commands.Cog):
         await self._safe_reply(
             message,
             f"感谢 {message.author.mention} 大佬分享！正在过审核，"
-            f"通过后会上架 [内卷地狱分享库](<https://involutionhell.com/share>) #{result.link_id}",
+            f"通过后会上架 [内卷地狱分享库](<https://involutionhell.com/feed>) #{result.link_id}",
         )
 
         # 后台轮询拿最终状态，拿到了再发第二条
@@ -197,7 +271,7 @@ class ShareListener(commands.Cog):
             await self._safe_reply(
                 message,
                 f"🎉 {user} 已上架 · #{link_id} "
-                f"[点此查看](<https://involutionhell.com/share>)",
+                f"[点此查看](<https://involutionhell.com/feed>)",
             )
             return
 
