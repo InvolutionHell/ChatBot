@@ -83,14 +83,47 @@ _MEDIA_EXTENSIONS = (
 )
 
 
+_INTERNAL_GITHUB_ORG = "involutionhell"  # GitHub 路径不区分大小写，统一比小写
+
+
+def _is_self_org_github_chatter(parsed) -> bool:
+    """github.com/InvolutionHell/<repo>/<sub-path> 视为内部 dev 讨论，不入分享库。
+
+    放行 case：
+      - github.com/InvolutionHell/<repo>          仓库主页（"安利自家工具"这种正常分享）
+      - github.com/InvolutionHell/<repo>/         同上，带尾斜杠
+      - github.com/InvolutionHell                 org 主页（罕见，但放行）
+      - github.com/<其它 org>/...                 第三方仓库的任何路径
+
+    拦截 case：
+      - github.com/InvolutionHell/<repo>/pull/N
+      - github.com/InvolutionHell/<repo>/issues/N
+      - github.com/InvolutionHell/<repo>/commit/<sha>
+      - github.com/InvolutionHell/<repo>/blob/...
+      - github.com/InvolutionHell/<repo>/tree/...
+      - github.com/InvolutionHell/<repo>/actions/...
+      - github.com/InvolutionHell/<repo>/discussions/...
+      - github.com/InvolutionHell/<repo>/releases/tag/...
+      —— 这些是 PR/issue 自动通知或 dev 联调时贴的，不是给社区"上架"的资源
+    """
+    host = parsed.netloc.lower().split(":")[0]
+    if host not in {"github.com", "www.github.com"}:
+        return False
+    segs = [s for s in parsed.path.split("/") if s]
+    # /<org>/<repo>/<sub-path...>  (>= 3 段才算 dev 子路径)
+    return len(segs) >= 3 and segs[0].lower() == _INTERNAL_GITHUB_ORG
+
+
 def _should_skip(url: str) -> bool:
-    """URL 是否属于需要跳过的源：Discord 域、贴纸聚合、或裸媒体文件。"""
+    """URL 是否属于需要跳过的源：Discord 域、贴纸聚合、自家 GitHub dev 子路径、或裸媒体文件。"""
     try:
         parsed = urlparse(url)
     except Exception:
         return False
     host = parsed.netloc.lower().split(":")[0]
     if host in _SKIP_HOSTS:
+        return True
+    if _is_self_org_github_chatter(parsed):
         return True
     # path 走小写匹配，跟 query 解耦：?foo=bar.jpg 不会误命中
     return parsed.path.lower().endswith(_MEDIA_EXTENSIONS)

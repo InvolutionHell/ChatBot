@@ -89,7 +89,12 @@ def test_should_not_skip_normal_articles_with_media_query(url: str) -> None:
     [
         "https://arxiv.org/abs/2501.00001",
         "https://mp.weixin.qq.com/s/abc",
+        # 自家仓库主页是合法分享（"看看我们的新工具"），允许
         "https://github.com/InvolutionHell/ChatBot",
+        "https://github.com/InvolutionHell/ChatBot/",
+        # 第三方仓库的任何路径都允许
+        "https://github.com/torvalds/linux/commit/abc123",
+        "https://github.com/openai/openai-python/pull/42",
         "https://scholar.google.com/scholar?q=rag",
         # 只有 host 相似但不完全匹配就不该 skip（防范未来新域名放行策略）
         "https://not-discord.com/x",
@@ -98,6 +103,29 @@ def test_should_not_skip_normal_articles_with_media_query(url: str) -> None:
 )
 def test_should_not_skip_other_urls(url: str) -> None:
     assert _should_skip(url) is False
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        # 实际事故：bot 自己的 PR 通告被自己捕获成 #19
+        "https://github.com/InvolutionHell/ChatBot/pull/2",
+        # 各种 dev 子路径都该 skip
+        "https://github.com/InvolutionHell/ChatBot/issues/5",
+        "https://github.com/InvolutionHell/ChatBot/commit/abc123",
+        "https://github.com/InvolutionHell/ChatBot/compare/main...feature",
+        "https://github.com/InvolutionHell/ChatBot/actions/runs/123",
+        "https://github.com/InvolutionHell/ChatBot/releases/tag/v1.0",
+        "https://github.com/InvolutionHell/ChatBot/discussions/10",
+        "https://github.com/InvolutionHell/ChatBot/blob/main/README.md",
+        "https://github.com/InvolutionHell/ChatBot/tree/main/src",
+        # 大小写漂移也要拦
+        "https://github.com/INVOLUTIONHELL/ChatBot/pull/2",
+        "https://www.github.com/InvolutionHell/involutionhell/pull/320",
+    ],
+)
+def test_should_skip_self_org_github_dev_chatter(url: str) -> None:
+    assert _should_skip(url) is True
 
 
 def test_should_skip_handles_bad_url_gracefully() -> None:
