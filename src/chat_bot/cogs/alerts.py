@@ -38,6 +38,7 @@ from discord.ext import commands
 
 from ..config import Settings
 from ..email_sender import SmtpConfig, send_email
+from ..urls import admin_review_url_email_alert
 
 log = structlog.get_logger(__name__)
 
@@ -198,7 +199,7 @@ class AlertServer(commands.Cog):
             f"推荐语：{payload.get('recommendation') or '(无)'}",
             f"命中：{flag_label}",
             "",
-            "请尽快人工复核：https://involutionhell.com/admin/community",
+            f"请尽快人工复核：{admin_review_url_email_alert()}",
         ]
         cfg = SmtpConfig(
             host="smtp.gmail.com",

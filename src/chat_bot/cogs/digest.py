@@ -19,6 +19,7 @@ from discord.ext import commands, tasks
 from ..api_client import InternalAPIError, fetch_summary
 from ..config import Settings
 from ..email_sender import SmtpConfig, send_email
+from ..urls import admin_review_url_email_digest
 
 log = structlog.get_logger(__name__)
 
@@ -138,7 +139,7 @@ class DailyDigest(commands.Cog):
             for s in summary.pending_samples:
                 lines.append(f"  [{s['id']}] {s['host']} → {s['url']}")
             lines.append("")
-        lines.append("处理入口：https://involutionhell.com/admin/community")
+        lines.append(f"处理入口：{admin_review_url_email_digest()}")
 
         body_text = "\n".join(lines)
 
