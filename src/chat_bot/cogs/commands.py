@@ -34,10 +34,9 @@ from discord.ext import commands
 
 from ..api_client import DuplicateURL, InternalAPIError, fetch_link, submit_internal
 from ..config import Settings
+from ..urls import feed_url_share_command
 
 _URL_RE = re.compile(r"^https?://[^\s<>\"'\]\)]+$", re.IGNORECASE)
-
-_FEED_URL = "https://involutionhell.com/zh/feed"
 
 # 轮询参数（与 listener cog 同款；常量重复定义避免 cog 间循环 import）
 _POLL_INTERVAL_SEC = 2.0
@@ -68,7 +67,7 @@ def _render_share_message(
         )
     elif status == "APPROVED":
         caption = (
-            f"-# ✅ 已收录到 [内卷地狱分享库]({_FEED_URL}) "
+            f"-# ✅ 已收录到 [内卷地狱分享库]({feed_url_share_command()}) "
             f"· `#{link_id}` · by {user_display_name}"
         )
     elif status == "PENDING_MANUAL":
