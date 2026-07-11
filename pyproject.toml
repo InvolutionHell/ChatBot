@@ -19,10 +19,13 @@ dependencies = [
     "aiosmtplib>=3.0.0",
     # 内嵌 HTTP 服务器，接收后端 FLAGGED 实时 webhook
     "aiohttp>=3.10.0",
+    "mcp>=1.28.1",
 ]
 
 [project.scripts]
 chat-bot = "chat_bot.__main__:main"
+mcp-server = "chat_bot.mcp_server:main"
+
 
 [build-system]
 requires = ["hatchling"]
