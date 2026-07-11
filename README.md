@@ -11,6 +11,7 @@ Involution Hell 社群 Discord 机器人。**从 Discord 群转链接 → 调 in
 > ⚠️ Bot **不直连数据库，不抓 OG，不做审核**。所有内容都走后端既有的 `SharedLinkEnrichmentWorker`，
 > 保持和主站用户手动提交完全一致的管线（PENDING → APPROVED/PENDING_MANUAL/FLAGGED）。
 > 所有 Discord 提交挂到 `discord-bridge` 系统账号，真实提交人写在 `recommendation` 字段里（`来自 Discord @xxx`）。
+> 此Bot非常轻量且目的仅仅是功能的实现，并不是Agents。如果有聊天需求，可以联系@longsizhuo 将AGents绑定在Discord Bot 上面，请不要在这个Bot上面尝试实现Agents的功能。
 
 ## 架构
 
