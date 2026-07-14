@@ -52,9 +52,7 @@ def test_watch_channel_ids_empty():
 
 
 def test_watch_channel_ids_single():
-    s = _settings(
-        DISCORD_BOT_TOKEN="t", INTERNAL_API_KEY="k", DISCORD_WATCH_CHANNEL_IDS="123"
-    )
+    s = _settings(DISCORD_BOT_TOKEN="t", INTERNAL_API_KEY="k", DISCORD_WATCH_CHANNEL_IDS="123")
     assert s.watch_channel_ids == {123}
 
 
@@ -71,16 +69,12 @@ def test_watch_channel_ids_multi_with_spaces():
 def test_discord_guild_id_empty_string_becomes_none():
     # 真实场景：.env 里写 DISCORD_GUILD_ID= 空值时，pydantic 默认会 int 解析失败
     # field_validator 要能兜住这种情况，不能让 bot 启动就崩
-    s = _settings(
-        DISCORD_BOT_TOKEN="t", INTERNAL_API_KEY="k", DISCORD_GUILD_ID=""
-    )
+    s = _settings(DISCORD_BOT_TOKEN="t", INTERNAL_API_KEY="k", DISCORD_GUILD_ID="")
     assert s.discord_guild_id is None
 
 
 def test_discord_guild_id_parsed():
-    s = _settings(
-        DISCORD_BOT_TOKEN="t", INTERNAL_API_KEY="k", DISCORD_GUILD_ID="42"
-    )
+    s = _settings(DISCORD_BOT_TOKEN="t", INTERNAL_API_KEY="k", DISCORD_GUILD_ID="42")
     assert s.discord_guild_id == 42
 
 
@@ -96,10 +90,7 @@ def test_internal_submit_url_strips_trailing_slash():
         INTERNAL_API_KEY="k",
         IH_BACKEND_URL="http://example.com:9999/",
     )
-    assert (
-        s.internal_submit_url
-        == "http://example.com:9999/api/community/links/internal"
-    )
+    assert s.internal_submit_url == "http://example.com:9999/api/community/links/internal"
 
 
 def test_email_configured_all_missing():

@@ -28,9 +28,7 @@ from chat_bot.cogs.alerts import AlertServer
 class _FakeSettings:
     """最小化的 Settings mock，只提供 AlertServer 用到的字段。"""
 
-    def __init__(
-        self, key: str = "test-secret", hmac_secret: str | None = None
-    ) -> None:
+    def __init__(self, key: str = "test-secret", hmac_secret: str | None = None) -> None:
         self.internal_api_key = SecretStr(key)
         self.discord_admin_channel_id = None  # 不推 Discord
         self.gmail_user = ""
@@ -125,9 +123,7 @@ async def test_alert_rejects_bad_json(client):
 
 # ── HMAC 签名分支 ─────────────────────────────────────────────────────
 def _sign(secret: str, raw: bytes) -> str:
-    return "sha256=" + hmac.new(
-        secret.encode("utf-8"), raw, hashlib.sha256
-    ).hexdigest()
+    return "sha256=" + hmac.new(secret.encode("utf-8"), raw, hashlib.sha256).hexdigest()
 
 
 @pytest_asyncio.fixture

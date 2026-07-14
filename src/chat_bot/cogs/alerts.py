@@ -50,6 +50,25 @@ def _loads_json(raw: bytes) -> dict:
     return json.loads(raw.decode("utf-8"))
 
 
+def _format_mc_event(payload: dict) -> str | None:
+    """MC 游戏事件 → 艾露猫播报文案；未知类型 / 缺玩家名返回 None。"""
+    etype = payload.get("type")
+    player = str(payload.get("player") or "")[:32]
+    if not player:
+        return None
+    if etype == "mc_join":
+        online = payload.get("online")
+        tail = f"现在服里 **{online}** 位老大在线，" if isinstance(online, int) and online > 0 else ""
+        return (
+            f"🎮 {player} 老大进 MC 服了！{tail}快来一起玩喵～\n"
+            f"-# 服务器地址：`mc.involutionhell.com`"
+        )
+    if etype == "mc_advancement":
+        adv = str(payload.get("advancement") or "")[:80]
+        return f"🏆 {player} 老大在 MC 服解锁了稀有成就 **[{adv}]**！艾露猫也想要喵～"
+    return None
+
+
 class AlertServer(commands.Cog):
     def __init__(self, bot: commands.Bot, settings: Settings) -> None:
         self.bot = bot
@@ -62,13 +81,17 @@ class AlertServer(commands.Cog):
         # aiohttp server 不依赖 Discord 登录，直接在这里挂起即可。
         app = web.Application()
         app.router.add_post("/alert/flagged", self._handle_flagged)
+        app.router.add_post("/alert/mc", self._handle_mc)
+        app.router.add_post("/alert/invest", self._handle_invest)
         self._runner = web.AppRunner(app, access_log=None)
         await self._runner.setup()
         # 绑 0.0.0.0：Backend 跑在 Docker 容器里，从容器内看 127.0.0.1 是容器自己
         # 而不是宿主机，因此必须监听所有接口才能接 docker bridge (host.docker.internal)。
         # 公网侧安全性由 Oracle VCN ingress + X-Internal-Key header + 可选 HMAC 签名保证。
         site = web.TCPSite(
-            self._runner, host="0.0.0.0", port=self.settings.chatbot_alert_port  # noqa: S104
+            self._runner,
+            host="0.0.0.0",
+            port=self.settings.chatbot_alert_port,  # noqa: S104
         )
         await site.start()
         log.info("alert_server_listening", port=self.settings.chatbot_alert_port)
@@ -94,12 +117,10 @@ class AlertServer(commands.Cog):
         """
         if not sig_header or not sig_header.startswith("sha256="):
             return False
-        provided_hex = sig_header[len("sha256="):].strip()
+        provided_hex = sig_header[len("sha256=") :].strip()
         if not provided_hex:
             return False
-        expected_hex = hmac.new(
-            secret.encode("utf-8"), raw_body, hashlib.sha256
-        ).hexdigest()
+        expected_hex = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
         # 大小写无关比较——避免后端大写/小写差异导致误拒
         return hmac.compare_digest(provided_hex.lower(), expected_hex.lower())
 
@@ -123,9 +144,7 @@ class AlertServer(commands.Cog):
                     has_header=bool(sig_header),
                     body_len=len(raw_body),
                 )
-                return web.json_response(
-                    {"ok": False, "msg": "invalid signature"}, status=401
-                )
+                return web.json_response({"ok": False, "msg": "invalid signature"}, status=401)
 
         try:
             payload = _loads_json(raw_body)
@@ -146,6 +165,75 @@ class AlertServer(commands.Cog):
         await self._push_discord(payload)
         await self._push_email(payload)
 
+        return web.json_response({"ok": True})
+
+    async def _handle_mc(self, req: web.Request) -> web.Response:
+        """MC 游戏事件（上线 / 稀有成就）→ 社区频道播报。
+
+        来源是同宿主机的 mc-chat-bot（gamebot/core/discord_notify.py）。
+        只做 X-Internal-Key 校验、不走 HMAC：mc-chat-bot 不签名，且该端点
+        只播公开的游戏动态，风险面远小于 FLAGGED 告警。
+        """
+        provided = req.headers.get("X-Internal-Key", "")
+        expected = self.settings.internal_api_key.get_secret_value()
+        if not expected or not hmac.compare_digest(provided, expected):
+            return web.json_response({"ok": False, "msg": "forbidden"}, status=403)
+        try:
+            payload = _loads_json(await req.read())
+        except Exception:
+            return web.json_response({"ok": False, "msg": "bad json"}, status=400)
+
+        text = _format_mc_event(payload)
+        if text is None:
+            return web.json_response({"ok": False, "msg": "unsupported type"}, status=400)
+
+        channel_id = self.settings.community_feed_channel_id
+        if not channel_id:
+            # 没配频道不算错误——ACK 掉，让 mc 侧不用重试
+            return web.json_response({"ok": True, "msg": "feed channel not configured"})
+        channel = self.bot.get_channel(channel_id)
+        if channel is None:
+            log.warning("mc_feed_channel_not_found", channel_id=channel_id)
+            return web.json_response({"ok": True, "msg": "channel not found"})
+        try:
+            await channel.send(text)
+            log.info("mc_feed_posted", type=payload.get("type"), player=payload.get("player"))
+        except Exception as e:
+            log.error("mc_feed_send_failed", error=str(e))
+        return web.json_response({"ok": True})
+
+    async def _handle_invest(self, req: web.Request) -> web.Response:
+        """openInvest 事件/verdict 报警 → DM 给配置的用户。
+
+        来源是同宿主机的 openInvest（services/discord_notify.py）。发到 DM
+        的巧思：那个频道同时是 Hermes 会话，用户回复报警即可让 agent 就地
+        分析。鉴权同 /alert/mc：只做 X-Internal-Key（invest 侧不签名）。
+        """
+        provided = req.headers.get("X-Internal-Key", "")
+        expected = self.settings.internal_api_key.get_secret_value()
+        if not expected or not hmac.compare_digest(provided, expected):
+            return web.json_response({"ok": False, "msg": "forbidden"}, status=403)
+        try:
+            payload = _loads_json(await req.read())
+        except Exception:
+            return web.json_response({"ok": False, "msg": "bad json"}, status=400)
+        text = str(payload.get("text") or "").strip()
+        if payload.get("type") != "invest_event" or not text:
+            return web.json_response(
+                {"ok": False, "msg": "unsupported payload"}, status=400
+            )
+
+        user_id = self.settings.invest_alert_dm_user_id
+        if not user_id:
+            # 没配收件人不算错误——ACK 掉让 invest 侧不重试
+            return web.json_response({"ok": True, "msg": "dm user not configured"})
+        try:
+            user = self.bot.get_user(user_id) or await self.bot.fetch_user(user_id)
+            await user.send(text[:2000])
+            log.info("invest_alert_dmed", chars=len(text))
+        except Exception as e:
+            log.error("invest_alert_dm_failed", error=str(e))
+            return web.json_response({"ok": False, "msg": "dm failed"}, status=502)
         return web.json_response({"ok": True})
 
     # ── Discord 推送 ───────────────────────────────────────────────────────

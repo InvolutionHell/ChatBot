@@ -54,6 +54,14 @@ class ChatBot(commands.Bot):
         await self.load_extension("chat_bot.cogs.commands")
         await self.load_extension("chat_bot.cogs.digest")
         await self.load_extension("chat_bot.cogs.alerts")
+        await self.load_extension("chat_bot.cogs.welcome")
+        await self.load_extension("chat_bot.cogs.starboard")
+        await self.load_extension("chat_bot.cogs.mc")
+        await self.load_extension("chat_bot.cogs.weekly")
+        await self.load_extension("chat_bot.cogs.github_feed")
+        # TODO: 每日 LeetCode 一题推送 cog——LeetCode 官方 GraphQL 的
+        # questionOfToday 接口免费无鉴权，照 digest.py 的 tasks.loop(time=...)
+        # 定时模式做，播到 COMMUNITY_FEED_CHANNEL_ID 即可
 
         # Slash command 同步：配了 guild_id 走 guild 同步（秒生效），否则全局（最长 1h 扩散）
         log = structlog.get_logger(__name__)

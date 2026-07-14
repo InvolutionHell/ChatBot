@@ -20,6 +20,7 @@ dependencies = [
     # 内嵌 HTTP 服务器，接收后端 FLAGGED 实时 webhook
     "aiohttp>=3.10.0",
     "mcp>=1.28.1",
+    "mcstatus>=14.0.0",
 ]
 
 [project.scripts]

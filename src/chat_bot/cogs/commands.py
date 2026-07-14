@@ -34,6 +34,7 @@ from discord.ext import commands
 
 from ..api_client import DuplicateURL, InternalAPIError, fetch_link, submit_internal
 from ..config import Settings
+from ..milestones import milestone_message, record_approval
 from ..urls import feed_url_share_command
 
 _URL_RE = re.compile(r"^https?://[^\s<>\"'\]\)]+$", re.IGNORECASE)
@@ -61,10 +62,7 @@ def _render_share_message(
     同一 link_id 在 PENDING → terminal 演进时多次重新渲染，格式保持一致。
     """
     if status == "PENDING":
-        caption = (
-            f"-# ⏳ 已提交分享 · `#{link_id}` · by {user_display_name} "
-            f"· AI 审核中（约 30s）"
-        )
+        caption = f"-# ⏳ 已提交分享 · `#{link_id}` · by {user_display_name} · AI 审核中（约 30s）"
     elif status == "APPROVED":
         caption = (
             f"-# ✅ 已收录到 [内卷地狱分享库]({feed_url_share_command()}) "
@@ -72,8 +70,7 @@ def _render_share_message(
         )
     elif status == "PENDING_MANUAL":
         caption = (
-            f"-# 🟡 已提交 · `#{link_id}` · by {user_display_name} "
-            f"· 非白名单域名，等待人工复核"
+            f"-# 🟡 已提交 · `#{link_id}` · by {user_display_name} · 非白名单域名，等待人工复核"
         )
     elif status == "FLAGGED":
         caption = (
@@ -81,20 +78,12 @@ def _render_share_message(
             f"· AI 标记需复核（如误判可私信管理员 appeal）"
         )
     elif status == "REJECTED":
-        caption = (
-            f"-# ❌ 已提交 · `#{link_id}` · by {user_display_name} "
-            f"· 审核未通过"
-        )
+        caption = f"-# ❌ 已提交 · `#{link_id}` · by {user_display_name} · 审核未通过"
     elif status == "ARCHIVED":
-        caption = (
-            f"-# 📦 已提交 · `#{link_id}` · by {user_display_name} "
-            f"· 系统已归档（原文失效）"
-        )
+        caption = f"-# 📦 已提交 · `#{link_id}` · by {user_display_name} · 系统已归档（原文失效）"
     else:
         # 未知状态兜底，不让 caption 渲染崩
-        caption = (
-            f"-# 已提交 · `#{link_id}` · by {user_display_name} · 状态: {status}"
-        )
+        caption = f"-# 已提交 · `#{link_id}` · by {user_display_name} · 状态: {status}"
 
     content = f"{url}\n{caption}"
     if recommendation:
@@ -119,9 +108,7 @@ class ShareCommands(commands.Cog):
         self.bot = bot
         self.settings = settings
 
-    @app_commands.command(
-        name="share", description="把链接收录到内卷地狱分享库（频道内公开）"
-    )
+    @app_commands.command(name="share", description="把链接收录到内卷地狱分享库（频道内公开）")
     @app_commands.describe(
         url="以 http:// 或 https:// 开头的完整 URL",
         recommendation="可选：一句话推荐语",
@@ -158,15 +145,11 @@ class ShareCommands(commands.Cog):
             return
         except InternalAPIError as e:
             log.error("slash_share_api_error", url=url, status=e.status)
-            await interaction.followup.send(
-                f"提交失败：后端返回 {e.status}。", ephemeral=True
-            )
+            await interaction.followup.send(f"提交失败：后端返回 {e.status}。", ephemeral=True)
             return
         except Exception as e:
             log.error("slash_share_unexpected_error", url=url, error=str(e))
-            await interaction.followup.send(
-                "提交失败，已通知开发者。", ephemeral=True
-            )
+            await interaction.followup.send("提交失败，已通知开发者。", ephemeral=True)
             return
 
         # 第一条消息：以 PENDING 状态渲染发出。后台 polling 拿到终态后 edit。
@@ -177,9 +160,7 @@ class ShareCommands(commands.Cog):
             recommendation=recommendation,
             status="PENDING",
         )
-        sent = await interaction.followup.send(
-            content=initial_content, wait=True
-        )
+        sent = await interaction.followup.send(content=initial_content, wait=True)
 
         # 启动后台轮询任务（fire-and-forget，_safe 兜底）
         task_name = f"share_command_poll_{result.link_id}"
@@ -191,6 +172,8 @@ class ShareCommands(commands.Cog):
                     url=url,
                     user_display_name=interaction.user.display_name,
                     recommendation=recommendation,
+                    user_id=interaction.user.id,
+                    user_mention=interaction.user.mention,
                 ),
                 name=task_name,
             ),
@@ -205,6 +188,8 @@ class ShareCommands(commands.Cog):
         url: str,
         user_display_name: str,
         recommendation: str | None,
+        user_id: int,
+        user_mention: str,
     ) -> None:
         """轮询 /internal/{id} 拿终态，命中后 edit 第一条消息显示真实状态。
 
@@ -224,9 +209,7 @@ class ShareCommands(commands.Cog):
                     timeout=self.settings.chatbot_api_timeout,
                 )
             except Exception as e:
-                log.warning(
-                    "share_command_poll_error", link_id=link_id, error=str(e)
-                )
+                log.warning("share_command_poll_error", link_id=link_id, error=str(e))
                 return
             if detail is None:
                 # 404 不该发生（刚 submit 完就消失？），出现了也只能放弃
@@ -248,6 +231,16 @@ class ShareCommands(commands.Cog):
                         link_id=link_id,
                         error=str(e),
                     )
+                if detail.status == "APPROVED":
+                    # 里程碑：第 1/10/50/100 条过审值得单独庆祝一下
+                    n = record_approval(user_id)
+                    if n:
+                        try:
+                            await sent_message.channel.send(
+                                milestone_message(user_mention, n)
+                            )
+                        except Exception as e:
+                            log.warning("milestone_send_failed", error=str(e))
                 return
 
         log.info("share_command_poll_timeout", link_id=link_id)

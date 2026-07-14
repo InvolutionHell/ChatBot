@@ -102,14 +102,18 @@ class DailyDigest(commands.Cog):
         today = datetime.now(_CST).strftime("%Y-%m-%d")
         embed = discord.Embed(
             title=f"📋 审核摘要 · {today}",
-            color=discord.Color.orange() if (summary.pending_manual + summary.flagged) else discord.Color.green(),
+            color=discord.Color.orange()
+            if (summary.pending_manual + summary.flagged)
+            else discord.Color.green(),
         )
         embed.add_field(name="人工待审", value=str(summary.pending_manual), inline=True)
         embed.add_field(name="已标记", value=str(summary.flagged), inline=True)
         embed.add_field(name="24h 新增通过", value=str(summary.approved_last_24h), inline=True)
 
         if summary.pending_samples:
-            lines = [f"• [{s['host']}]({s['url']}) · `{s['id']}`" for s in summary.pending_samples[:10]]
+            lines = [
+                f"• [{s['host']}]({s['url']}) · `{s['id']}`" for s in summary.pending_samples[:10]
+            ]
             embed.add_field(name="最久未处理", value="\n".join(lines), inline=False)
 
         embed.set_footer(text="处理入口：involutionhell.com/admin/community")

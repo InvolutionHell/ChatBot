@@ -60,6 +60,18 @@ class Settings(BaseSettings):
     # X-Signature: sha256=<hex> = HMAC(secret, raw_body)。没配时跳过这层。
     webhook_hmac_secret: SecretStr | None = Field(None, alias="WEBHOOK_HMAC_SECRET")
 
+    # ---------- 社区小功能 ----------
+    # 社区动态频道：MC 播报 / 周报 / GitHub 动态共用（空则这三个功能关闭）
+    community_feed_channel_id: int | None = Field(None, alias="COMMUNITY_FEED_CHANNEL_ID")
+    # 精华墙频道（空则精华墙整体关闭）
+    starboard_channel_id: int | None = Field(None, alias="STARBOARD_CHANNEL_ID")
+    # 上墙所需 ⭐ 数
+    starboard_threshold: int = Field(3, alias="STARBOARD_THRESHOLD")
+    # /mc 命令要 ping 的服务器
+    mc_server_host: str = Field("mc.involutionhell.com", alias="MC_SERVER_HOST")
+    # openInvest 报警 DM 的收件人（空则 /alert/invest 只 ACK 不投递）
+    invest_alert_dm_user_id: int | None = Field(None, alias="INVEST_ALERT_DM_USER_ID")
+
     # ---------- Gmail SMTP ----------
     # 未填时不发邮件（但 Discord 推送仍走）
     gmail_user: str = Field("", alias="GMAIL_USER")
@@ -70,6 +82,9 @@ class Settings(BaseSettings):
         "discord_guild_id",
         "discord_admin_channel_id",
         "webhook_hmac_secret",
+        "starboard_channel_id",
+        "community_feed_channel_id",
+        "invest_alert_dm_user_id",
         mode="before",
     )
     @classmethod

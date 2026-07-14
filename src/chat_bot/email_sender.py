@@ -34,7 +34,9 @@ def _split_addrs(raw: str) -> list[str]:
     return [a.strip() for a in raw.split(",") if a.strip()]
 
 
-async def send_email(cfg: SmtpConfig, subject: str, body_text: str, body_html: str | None = None) -> bool:
+async def send_email(
+    cfg: SmtpConfig, subject: str, body_text: str, body_html: str | None = None
+) -> bool:
     """发一封邮件；失败时打日志返回 False，绝不抛出（不阻塞 bot 主流程）。
 
     to_addr 支持逗号分隔的多地址。

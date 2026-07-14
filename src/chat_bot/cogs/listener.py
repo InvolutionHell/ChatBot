@@ -25,6 +25,7 @@ from discord.ext import commands
 
 from ..api_client import DuplicateURL, InternalAPIError, fetch_link, submit_internal
 from ..config import Settings
+from ..milestones import milestone_message, record_approval
 from ..urls import feed_url_share_approved, feed_url_share_listener
 
 _URL_RE = re.compile(r"https?://[^\s<>\"'\]\)]+", re.IGNORECASE)
@@ -34,32 +35,34 @@ _URL_RE = re.compile(r"https?://[^\s<>\"'\]\)]+", re.IGNORECASE)
 #   2. 贴纸 / GIF / meme 聚合站 —— Discord 内置贴纸面板会发 tenor/klipy/giphy
 #      链接出来，message.content 里就是裸 URL。这些不是"分享资源"，不该入库
 # 静默忽略，不回复不提交，像 bot 没看到一样。
-_SKIP_HOSTS = frozenset({
-    # Discord 主站
-    "discord.com",
-    "www.discord.com",
-    "canary.discord.com",
-    "ptb.discord.com",
-    # Discord 邀请短链
-    "discord.gg",
-    # Discord 附件 / CDN
-    "discordapp.com",
-    "cdn.discordapp.com",
-    "media.discordapp.net",
-    # 贴纸 / GIF 聚合（Discord 贴纸面板默认走这些）
-    "tenor.com",
-    "media.tenor.com",
-    "c.tenor.com",
-    "giphy.com",
-    "media.giphy.com",
-    "media0.giphy.com",
-    "media1.giphy.com",
-    "media2.giphy.com",
-    "media3.giphy.com",
-    "media4.giphy.com",
-    "klipy.com",
-    "media.klipy.com",
-})
+_SKIP_HOSTS = frozenset(
+    {
+        # Discord 主站
+        "discord.com",
+        "www.discord.com",
+        "canary.discord.com",
+        "ptb.discord.com",
+        # Discord 邀请短链
+        "discord.gg",
+        # Discord 附件 / CDN
+        "discordapp.com",
+        "cdn.discordapp.com",
+        "media.discordapp.net",
+        # 贴纸 / GIF 聚合（Discord 贴纸面板默认走这些）
+        "tenor.com",
+        "media.tenor.com",
+        "c.tenor.com",
+        "giphy.com",
+        "media.giphy.com",
+        "media0.giphy.com",
+        "media1.giphy.com",
+        "media2.giphy.com",
+        "media3.giphy.com",
+        "media4.giphy.com",
+        "klipy.com",
+        "media.klipy.com",
+    }
+)
 
 # 兜底：只指向静态媒体文件的 URL（路径以这些扩展名结尾）一律跳过——常见于
 # WeChat / 各种图床的裸图片链接，非分享资源。把扩展名匹配做在 path 上避免误伤
@@ -128,6 +131,7 @@ def _should_skip(url: str) -> bool:
         return True
     # path 走小写匹配，跟 query 解耦：?foo=bar.jpg 不会误命中
     return parsed.path.lower().endswith(_MEDIA_EXTENSIONS)
+
 
 # 轮询最终状态的参数：每 2s 查一次，最多 30s
 _POLL_INTERVAL_SEC = 2.0
@@ -260,9 +264,7 @@ class ShareListener(commands.Cog):
 
         log.info("poll_final_status_timeout", link_id=link_id)
 
-    async def _send_status_update(
-        self, message: discord.Message, detail, link_id: int
-    ) -> None:
+    async def _send_status_update(self, message: discord.Message, detail, link_id: int) -> None:
         """按终态发对应的 reply。"""
         user = message.author.mention
         status = detail.status
@@ -271,9 +273,14 @@ class ShareListener(commands.Cog):
             # 已自动通过——第一条 reply 已经说了，这里短讯收尾即可
             await self._safe_reply(
                 message,
-                f"🎉 {user} 已上架 · #{link_id} "
-                f"[点此查看](<{feed_url_share_approved()}>)",
+                f"🎉 {user} 已上架 · #{link_id} [点此查看](<{feed_url_share_approved()}>)",
             )
+            # 里程碑：第 1/10/50/100 条过审值得单独庆祝一下
+            n = record_approval(message.author.id)
+            if n:
+                await self._safe_reply(
+                    message, milestone_message(message.author.mention, n)
+                )
             return
 
         if status == "PENDING_MANUAL":
@@ -297,8 +304,7 @@ class ShareListener(commands.Cog):
         if status == "REJECTED":
             await self._safe_reply(
                 message,
-                f"❌ {user} 这条已被管理员拒绝 · #{link_id}。"
-                f"如有疑问欢迎私信管理员",
+                f"❌ {user} 这条已被管理员拒绝 · #{link_id}。如有疑问欢迎私信管理员",
             )
             return
 
