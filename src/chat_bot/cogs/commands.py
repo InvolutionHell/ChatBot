@@ -137,6 +137,7 @@ class ShareCommands(commands.Cog):
                 submitter_label=interaction.user.display_name,
                 recommendation=recommendation,
                 timeout=self.settings.chatbot_api_timeout,
+                discord_user_id=interaction.user.id,
             )
         except DuplicateURL:
             await interaction.followup.send(
