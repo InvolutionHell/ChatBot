@@ -22,7 +22,7 @@ Production runs as systemd unit `chat-bot` on this Oracle box:
 
 Discord bot for the Involution Hell community. It bridges Discord → the involution-hell backend's internal API (`POST /api/community/links/internal` at `127.0.0.1:8080`, authed with `X-Internal-Key`). The bot **deliberately does not** touch the database, fetch OG metadata, or moderate content — all of that lives in the backend's `SharedLinkEnrichmentWorker` pipeline (`PENDING → APPROVED / PENDING_MANUAL / FLAGGED / REJECTED / ARCHIVED`). Don't add DB access or moderation logic to the bot; a previous attempt to write tables directly was rejected because it bypassed backend review.
 
-All Discord submissions attach to the `discord-bridge` system account; the real submitter's name travels in `submitterLabel` / `recommendation`.
+Every submission carries the sharer's Discord user id (`discordUserId`). The backend files the link under the site account linked to that Discord id (`user_identities`, provider `discord`) when one exists and is enabled; otherwise it attaches to the `discord-bridge` system account. The id is always stored in `shared_links.discord_user_id`, and the display name still travels in `submitterLabel` → `recommendation` (`来自 Discord @xxx`).
 
 ## Architecture
 
