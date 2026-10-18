@@ -192,6 +192,7 @@ class ShareListener(commands.Cog):
                 url=url,
                 submitter_label=message.author.display_name,
                 timeout=self.settings.chatbot_api_timeout,
+                discord_user_id=message.author.id,
             )
         except DuplicateURL:
             log.info("share_duplicate", url=url, submitter=message.author.display_name)

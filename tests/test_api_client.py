@@ -50,6 +50,39 @@ async def test_submit_internal_success(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_submit_internal_sends_discord_user_id(monkeypatch):
+    sent = {}
+
+    async def fake_post(self, url, **kw):  # noqa: ARG001
+        sent.update(kw["json"])
+        return httpx.Response(
+            200,
+            json={"success": True, "data": {"id": 1}},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    await submit_internal(
+        base_url="http://127.0.0.1:8080/api/community/links/internal",
+        internal_key="k",
+        url="https://example.com/a",
+        submitter_label="alice",
+        discord_user_id=900000000000000001,
+    )
+    # 后端按字符串收（snowflake 超出 JS 安全整数范围），这里必须是 str
+    assert sent["discordUserId"] == "900000000000000001"
+
+    sent.clear()
+    await submit_internal(
+        base_url="http://127.0.0.1:8080/api/community/links/internal",
+        internal_key="k",
+        url="https://example.com/b",
+        submitter_label="mcp-caller",
+    )
+    assert sent["discordUserId"] is None
+
+
+@pytest.mark.asyncio
 async def test_submit_internal_duplicate(monkeypatch):
     async def fake_post(self, url, **kw):  # noqa: ARG001
         return httpx.Response(409, text="dup", request=httpx.Request("POST", url))

@@ -89,8 +89,12 @@ async def submit_internal(
     submitter_label: str,
     recommendation: str | None = None,
     timeout: float = 15.0,
+    discord_user_id: int | None = None,
 ) -> SubmitResult:
     """POST /api/community/links/internal。
+
+    discord_user_id：分享人的 Discord 用户 id。昵称会改、会重名，后端靠这个 id
+    把链接记到绑定了该 Discord 的站内账号名下；MCP 等没有 Discord 用户的渠道不传。
 
     异常：
     - DuplicateURL：后端 409，URL 已被提交过
@@ -101,6 +105,7 @@ async def submit_internal(
         "url": url,
         "recommendation": recommendation,
         "submitterLabel": submitter_label,
+        "discordUserId": str(discord_user_id) if discord_user_id is not None else None,
     }
     headers = {"X-Internal-Key": internal_key, "Content-Type": "application/json"}
 

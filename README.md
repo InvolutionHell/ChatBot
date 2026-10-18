@@ -10,7 +10,8 @@ Involution Hell 社群 Discord 机器人。**从 Discord 群转链接 → 调 in
 
 > ⚠️ Bot **不直连数据库，不抓 OG，不做审核**。所有内容都走后端既有的 `SharedLinkEnrichmentWorker`，
 > 保持和主站用户手动提交完全一致的管线（PENDING → APPROVED/PENDING_MANUAL/FLAGGED）。
-> 所有 Discord 提交挂到 `discord-bridge` 系统账号，真实提交人写在 `recommendation` 字段里（`来自 Discord @xxx`）。
+> 提交时带上分享人的 Discord id：绑定过站内账号的人，链接记到本人名下；没绑定的挂 `discord-bridge` 系统账号。
+> Discord id 一律存进 `shared_links.discord_user_id`，昵称照旧写进 `recommendation`（`来自 Discord @xxx`）。
 > 此Bot非常轻量且目的仅仅是功能的实现，并不是Agents。如果有聊天需求，可以联系@longsizhuo 将AGents绑定在Discord Bot 上面，请不要在这个Bot上面尝试实现Agents的功能。
 
 ## 架构
@@ -121,14 +122,14 @@ sudo journalctl -u chat-bot -f
 | 重启 | `sudo systemctl restart chat-bot` |
 | 改代码后 | `sudo systemctl restart chat-bot` |
 | 改 .env | 改 `/home/ubuntu/involution-hell-project/backend/.env` → `sudo systemctl restart chat-bot`（后端也要重启） |
-| 查库 | `docker exec -it involution-postgres psql -U $PGUSER -d $PGDATABASE -c "SELECT id, host, status, recommendation, created_at FROM shared_links WHERE submitter_id = (SELECT id FROM user_accounts WHERE username='discord-bridge') ORDER BY created_at DESC LIMIT 20;"` |
+| 查库 | `docker exec -it involution-postgres psql -U $PGUSER -d $PGDATABASE -c "SELECT id, host, status, recommendation, created_at FROM shared_links WHERE discord_user_id IS NOT NULL OR submitter_id = (SELECT id FROM user_accounts WHERE username='discord-bridge') ORDER BY created_at DESC LIMIT 20;"` |
 
 ## 设计取舍
 
 - **不重复造轮子**：OG 抓取 / DeepSeek 审核 / 白名单 / 举报 / 归档 这套管线后端已经有了，
   Bot 走一样的 API 就行。之前试过在 Bot 侧直写 `share.submission` 表，会绕开后端审核，不合格。
 - **discord-bridge 系统账号**：避免给每个 Discord 用户建 `user_accounts` 行（otherwise 用户清理会变噩梦）。
-  真实提交人名放 `recommendation` 字段里，主站展示时用这个。
+  只兜底没绑定站内账号的人；绑定了的按 Discord id 记到本人名下。昵称放 `recommendation` 字段里，主站展示时用这个。
 - **不做反向广播**：MVP 阶段只做「被动收集」，别在群里刷屏打扰大家。
 - **Bot ↔ 后端用 `127.0.0.1`**：同机内网通信，不经 Caddy，不用 TLS，最小攻击面。
   X-Internal-Key 是二道锁，防止别的容器或本机用户误访问。
